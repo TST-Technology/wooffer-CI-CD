@@ -6,5 +6,6 @@ const website = require("./controller");
 //<==================== Public APIs ====================>
 router.get("/gitPull", website.gitPull);
 router.get("/rebuild", website.rebuild);
+router.post("/rebuild", website.rebuild);
 
 module.exports = router;

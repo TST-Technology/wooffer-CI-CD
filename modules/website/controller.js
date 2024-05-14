@@ -22,7 +22,7 @@ const sendMessageInSlack = async (title, text, color) => {
   });
 };
 
-exports.rebuild = async (req, res, next) => {
+const executeBuildCommand = () => {
   sendMessageInSlack(`Website Build Started`, "", "#FFA500");
   exec(process.env.NEXT_PUBLIC_COMMAND_RUN, (error, stdout, stderr) => {
     console.log("stdout: " + stdout);
@@ -34,6 +34,10 @@ exports.rebuild = async (req, res, next) => {
       sendMessageInSlack(`Website Build Success`, "", "#7CD197");
     }
   });
+};
+
+exports.rebuild = async (req, res, next) => {
+  executeBuildCommand();
   res.status(200).json({ message: "Wooffer" });
 };
 
@@ -47,6 +51,7 @@ exports.gitPull = async (req, res, next) => {
       sendMessageInSlack(`Website Git pull Failed`, stderr, "#ff0000");
     } else {
       sendMessageInSlack(`Website Git pull Success`, "", "#7CD197");
+      executeBuildCommand();
     }
   });
   res.status(200).json({ message: "Wooffer" });

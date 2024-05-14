@@ -51,7 +51,9 @@ exports.gitPull = async (req, res, next) => {
       sendMessageInSlack(`Website Git pull Failed`, stderr, "#ff0000");
     } else {
       await sendMessageInSlack(`Website Git pull Success`, stdout, "#7CD197");
-      executeBuildCommand();
+      if ("Already up to date." != stdout) {
+        executeBuildCommand();
+      }
     }
   });
   res.status(200).json({ message: "Wooffer" });

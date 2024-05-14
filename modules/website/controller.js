@@ -50,7 +50,7 @@ exports.gitPull = async (req, res, next) => {
       console.log("exec error: " + error);
       sendMessageInSlack(`Website Git pull Failed`, stderr, "#ff0000");
     } else {
-      await sendMessageInSlack(`Website Git pull Success`, "", "#7CD197");
+      await sendMessageInSlack(`Website Git pull Success`, stdout, "#7CD197");
       executeBuildCommand();
     }
   });

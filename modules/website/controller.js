@@ -78,7 +78,7 @@ const githubReqBodyParser = (payload) => {
   let isForcePush = payload?.forced;
 
   if (branchDetails?.length > 0) {
-    branchName = branchDetails(branchDetails[branchDetails?.length - 1]);
+    branchName = branchDetails[branchDetails?.length - 1];
     slackMessage = `Branch: ${branchName}`;
   }
 

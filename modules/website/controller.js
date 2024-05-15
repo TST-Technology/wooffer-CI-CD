@@ -42,6 +42,8 @@ exports.rebuild = async (req, res, next) => {
 };
 
 exports.gitPull = async (req, res, next) => {
+  console.log(req.body);
+
   await sendMessageInSlack(`Website Git pull Started`, "", "#FFA500");
   exec(process.env.NEXT_PUBLIC_GIT_PULL, async (error, stdout, stderr) => {
     console.log("stdout: " + stdout);

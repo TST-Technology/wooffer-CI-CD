@@ -87,13 +87,7 @@ const githubReqBodyParser = (payload) => {
   if (isForcePush) {
     slackMessage += `\nForce Push: ${isForcePush}`;
   }
-  console.log({
-    branchName,
-    userLoginName,
-    commitMessage,
-    isForcePush,
-    slackMessage,
-  });
+
   return {
     branchName,
     userLoginName,

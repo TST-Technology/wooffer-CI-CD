@@ -5,10 +5,14 @@ const { exec } = require("child_process");
 // Helper function to send responses to Slack
 const responseInClientSlack = async (url, body) => {
   try {
-    return await axios.post(url, body);
+    const response = await axios.post(url, body);
+    console.log("Slack response status:", response.status);
+    console.log("Slack response data:", response.data);
   } catch (error) {
-    console.error("Slack response error:", error);
-    return;
+    console.error(
+      "Slack response error:",
+      error.response ? error.response.data : error.message
+    );
   }
 };
 

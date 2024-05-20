@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 
 exports.verifyGithubSignature = async (req, res, next) => {
-  const secret = process.env.WEBHOOK_SECRET;
+  const secret = process.env.GITHUB_WEBHOOK_SECRET;
   const signature = req.headers["x-hub-signature-256"];
   const payload = JSON.stringify(req.body);
 

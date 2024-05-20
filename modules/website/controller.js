@@ -1,17 +1,20 @@
 "use strict";
 const axios = require("axios");
-var exec = require("child_process").exec;
+const { exec } = require("child_process");
 
+// Helper function to send responses to Slack
 const responseInClientSlack = async (url, body) => {
   try {
-    return await axios.post(url, body, {});
-  } catch {
+    return await axios.post(url, body);
+  } catch (error) {
+    console.error("Slack response error:", error);
     return;
   }
 };
 
+// Helper function to send messages to Slack
 const sendMessageInSlack = async (title, text, color) => {
-  await responseInClientSlack(process.env.slackID, {
+  await responseInClientSlack(process.env.SLACK_WEBHOOK_URL, {
     attachments: [
       {
         title,
@@ -22,77 +25,71 @@ const sendMessageInSlack = async (title, text, color) => {
   });
 };
 
+// Execute the build command
 const executeBuildCommand = async () => {
   await sendMessageInSlack(`Website Build Started`, "", "#FFA500");
-  exec(process.env.NEXT_PUBLIC_COMMAND_RUN, (error, stdout, stderr) => {
+  exec(process.env.BUILD_COMMAND, (error, stdout, stderr) => {
     console.log("stdout: " + stdout);
     console.log("stderr: " + stderr);
-    if (error !== null) {
-      console.log("exec error: " + error);
-      sendMessageInSlack(`Website Build Failed`, stderr, "#ff0000");
+    if (error) {
+      console.error("exec error:", error);
+      sendMessageInSlack(`Website Build Failed`, stderr, "#FF0000");
     } else {
-      sendMessageInSlack(`Website Build Success`, "", "#7CD197");
+      sendMessageInSlack(`Website Build Success`, stdout, "#7CD197");
     }
   });
 };
 
-exports.rebuild = async (req, res, next) => {
-  executeBuildCommand();
-  res.status(200).json({ message: "Wooffer" });
+// Handle rebuild request
+exports.rebuild = async (req, res) => {
+  await executeBuildCommand();
+  res.status(200).json({ message: "Rebuild initiated" });
 };
 
-exports.gitPull = async (req, res, next) => {
-  const { branchName, slackMessage } = githubReqBodyParser(req.body);
+// Handle git pull request
+exports.gitPull = async (req, res) => {
+  const { branchName, slackMessage } = parseGithubPayload(req.body);
 
-  if (branchName == process.env.branchName) {
+  if (branchName === process.env.TARGET_BRANCH) {
     await sendMessageInSlack(
       `Website Git pull Started`,
       slackMessage,
       "#FFA500"
     );
-    exec(process.env.NEXT_PUBLIC_GIT_PULL, async (error, stdout, stderr) => {
+    exec(process.env.GIT_PULL_COMMAND, async (error, stdout, stderr) => {
       console.log("stdout: " + stdout);
       console.log("stderr: " + stderr);
-      if (error !== null) {
-        console.log("exec error: " + error);
-        sendMessageInSlack(`Website Git pull Failed`, stderr, "#ff0000");
+      if (error) {
+        console.error("exec error:", error);
+        sendMessageInSlack(`Website Git pull Failed`, stderr, "#FF0000");
       } else {
         await sendMessageInSlack(`Website Git pull Success`, stdout, "#7CD197");
-
-        if ("Already up to date." != stdout.toString().trim()) {
-          executeBuildCommand();
+        if (!stdout.toString().trim().includes("Already up to date.")) {
+          await executeBuildCommand();
         }
       }
     });
+  } else {
+    console.log(`Push to branch ${branchName} ignored.`);
   }
 
-  res.status(200).json({ message: "Wooffer" });
+  res.status(200).json({ message: "Git pull processed" });
 };
 
-const githubReqBodyParser = (payload) => {
+// Parse GitHub webhook payload
+const parseGithubPayload = (payload) => {
   const branchDetails = payload?.ref?.split("/");
-  let branchName = "";
-  let slackMessage = "";
-  let userLoginName = payload?.sender?.login;
-  let commitMessage = payload?.head_commit?.message;
-  let isForcePush = payload?.forced;
+  const branchName = branchDetails?.[branchDetails.length - 1] || "";
+  const userLoginName = payload?.sender?.login || "unknown";
+  const commitMessage = payload?.head_commit?.message || "no commit message";
+  const isForcePush = payload?.forced || false;
 
-  if (branchDetails?.length > 0) {
-    branchName = branchDetails[branchDetails?.length - 1];
-    slackMessage = `Branch: ${branchName}`;
-  }
+  const slackMessage = `
+    Branch: ${branchName}
+    Sender: ${userLoginName}
+    Commit: ${commitMessage}
+    ${isForcePush ? `Force Push: ${isForcePush}` : ""}
+  `;
 
-  slackMessage += `\nSender: ${userLoginName}`;
-  slackMessage += `\nCommit: ${commitMessage}`;
-  if (isForcePush) {
-    slackMessage += `\nForce Push: ${isForcePush}`;
-  }
-
-  return {
-    branchName,
-    userLoginName,
-    commitMessage,
-    isForcePush,
-    slackMessage,
-  };
+  return { branchName, slackMessage };
 };

@@ -40,7 +40,7 @@ app.use(
 app.use(
   bodyParser.json({
     verify: (req, res, buf) => {
-      req.rawBody = buf.toString();
+      req.rawBody = buf;
     },
   })
 );

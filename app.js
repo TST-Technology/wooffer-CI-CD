@@ -6,6 +6,7 @@ const cors = require("cors");
 const compression = require("compression");
 const helmet = require("helmet");
 const dotenv = require("dotenv");
+const bodyParser = require("body-parser");
 const indexRouter = require("./routes");
 
 dotenv.config();
@@ -32,6 +33,15 @@ app.use(compression());
 app.use(
   helmet({
     contentSecurityPolicy: false, // Customize your CSP policy as needed
+  })
+);
+
+// Body parser middleware for handling raw body needed for signature verification
+app.use(
+  bodyParser.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString();
+    },
   })
 );
 

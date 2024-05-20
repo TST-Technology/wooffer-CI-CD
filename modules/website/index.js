@@ -6,7 +6,7 @@ const { verifyGithubSignature } = require("../../middlewares/auth");
 
 // Public APIs
 router.post("/webhook", verifyGithubSignature, website.gitPull);
-// router.get("/webhook", verifyGithubSignature, website.gitPull);
+router.get("/webhook", verifyGithubSignature, website.gitPull);
 router.post("/rebuild", website.rebuild);
 router.get("/rebuild", website.rebuild);
 

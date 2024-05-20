@@ -36,11 +36,13 @@ app.use(
   })
 );
 
-// Body parser middleware for handling raw body needed for signature verification
+// Middleware to capture raw body
 app.use(
   bodyParser.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf;
+    verify: (req, res, buf, encoding) => {
+      console.log("before----", req.rawBody);
+      req.rawBody = buf.toString(encoding || "utf-8");
+      console.log("after----", req.rawBody);
     },
   })
 );

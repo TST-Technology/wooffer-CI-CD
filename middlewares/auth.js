@@ -16,10 +16,11 @@ exports.verifyGithubSignature = (req, res, next) => {
 
   const hash = `sha256=${crypto
     .createHmac("sha256", secret)
-    .update(req.rawBody)
+    .update(req.body)
     .digest("hex")}`;
 
   console.log("Calculated Hash:", hash);
+  console.log("Raw Body:", req.body.toString());
 
   if (signature !== hash) {
     return res.status(403).send("Forbidden: Signature mismatch");

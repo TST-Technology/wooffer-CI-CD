@@ -40,9 +40,9 @@ app.use(
 app.use(
   bodyParser.json({
     verify: (req, res, buf, encoding) => {
-      console.log("before----", req.rawBody);
-      req.rawBody = buf.toString(encoding || "utf-8");
-      console.log("after----", req.rawBody);
+      console.log("before----", req.body);
+      req.body = buf.toString(encoding || "utf-8");
+      console.log("after----", req.body);
     },
   })
 );

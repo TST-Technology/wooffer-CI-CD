@@ -1,21 +1,22 @@
 const crypto = require("crypto");
 
+// Verify GitHub webhook secret
 exports.verifyGithubSignature = async (req, res, next) => {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
   const signature = req.headers["x-hub-signature-256"];
-  const payload = JSON.stringify(req.body);
 
-  if (!signature) {
-    return res.status(403).send("No signature found");
+  // Ensure both the secret and signature are present
+  if (!secret || !signature) {
+    return res.status(403).send("Forbidden");
   }
 
   const hash = `sha256=${crypto
     .createHmac("sha256", secret)
-    .update(payload)
+    .update(req.rawBody)
     .digest("hex")}`;
 
-  if (hash !== signature) {
-    return res.status(403).send("Signature mismatch");
+  if (signature !== hash) {
+    return res.status(403).send("Forbidden");
   }
 
   next();

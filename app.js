@@ -6,7 +6,6 @@ const cors = require("cors");
 const compression = require("compression");
 const helmet = require("helmet");
 const dotenv = require("dotenv");
-const bodyParser = require("body-parser");
 const indexRouter = require("./routes");
 
 dotenv.config();
@@ -14,7 +13,13 @@ dotenv.config();
 const app = express();
 
 // Middleware for parsing JSON and URL-encoded data
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf, encoding) => {
+      req.rawBody = buf.toString(encoding || "utf8");
+    },
+  })
+);
 app.use(express.urlencoded({ extended: false }));
 
 // Middleware for parsing cookies
@@ -33,15 +38,6 @@ app.use(compression());
 app.use(
   helmet({
     contentSecurityPolicy: false, // Customize your CSP policy as needed
-  })
-);
-
-// Middleware to capture raw body
-app.use(
-  bodyParser.json({
-    verify: (req, res, buf, encoding) => {
-      req.rawBody = buf.toString(encoding || "utf8");
-    },
   })
 );
 

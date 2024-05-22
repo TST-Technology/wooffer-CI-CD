@@ -3,25 +3,40 @@ const crypto = require("crypto");
 async function generateHmacSha256(secret, payload) {
   const hmac = crypto.createHmac("sha256", secret);
   hmac.update(payload);
-  const signature = `sha256=${hmac.digest("hex")}`;
-  return signature;
+  return `sha256=${hmac.digest("hex")}`;
 }
 
-// Verify GitHub webhook secret middleware
 exports.verifyGithubSignature = async (req, res, next) => {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
   const signature = req.headers["x-hub-signature-256"];
 
-  // Ensure both the secret and signature are present
-  if (!secret || !signature) {
-    console.log("Missing secret or signature");
-    return res.status(403).send("Forbidden: Missing secret or signature");
+  if (!secret) {
+    return res
+      .status(403)
+      .send("Forbidden: GITHUB_WEBHOOK_SECRET environment variable is not set");
   }
 
-  // Ensure both the secret and signature are present
-  if (generateHmacSha256(secret, req.rawBody) == !signature) {
-    console.log("Missing secret or signature");
-    return res.status(403).send("Forbidden: Missing secret or signature");
+  if (!signature) {
+    return res
+      .status(403)
+      .send("Forbidden: 'x-hub-signature-256' header is missing");
+  }
+
+  try {
+    const generatedSignature = await generateHmacSha256(secret, req.rawBody);
+    if (
+      !crypto.timingSafeEqual(
+        Buffer.from(generatedSignature),
+        Buffer.from(signature)
+      )
+    ) {
+      return res.status(403).send("Forbidden: Invalid signature");
+    }
+  } catch (error) {
+    console.error("Error verifying GitHub signature:", error);
+    return res
+      .status(500)
+      .send("Internal Server Error: Failed to verify GitHub signature");
   }
 
   next();

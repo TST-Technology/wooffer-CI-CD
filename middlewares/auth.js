@@ -12,6 +12,10 @@ async function generateHmacSha256(secret, payload) {
 }
 
 exports.verifyGithubSignature = async (req, res, next) => {
+  console.log(
+    "req.body............................................................? ",
+    req.body
+  );
   const projectName = req.body.repository.name;
   console.log("Received payload for project:", projectName);
   const projectConfig = projectsConfig[projectName];

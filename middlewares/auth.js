@@ -11,18 +11,13 @@ async function generateHmacSha256(secret, payload) {
   return `sha256=${hmac.digest("hex")}`;
 }
 
-exports.verifyGithubSignature = async (req, res, next) => {
+exports.verifySignature = async (req, res, next) => {
   try {
-    console.log(
-      "req.body-------------------------------------",
-      parseGithubPayload(req.body)
-    );
-    console.log(
-      "req.rawBody-------------------------------------",
-      parseGithubPayload(req.rawBody)
-    );
-    const payload = parseGithubPayload(req.body); // Directly use req.body if JSON parsing is correct
-    const projectName = payload.repository?.name;
+    // Log the request body for debugging
+    console.log("Received request body:", req.body);
+
+    // Extract repository name from the payload
+    const projectName = req.body.repository?.name;
 
     if (!projectName) {
       console.error("No repository name found in payload");
@@ -31,6 +26,7 @@ exports.verifyGithubSignature = async (req, res, next) => {
 
     console.log("Received payload for project:", projectName);
 
+    // Load project-specific configuration
     const projectConfig = projectsConfig[projectName];
     if (!projectConfig) {
       console.error(`Project config not found for project: ${projectName}`);
@@ -57,9 +53,11 @@ exports.verifyGithubSignature = async (req, res, next) => {
         .send("Forbidden: 'x-hub-signature-256' header is missing");
     }
 
+    // Generate signature from request payload
     const generatedSignature = await generateHmacSha256(secret, req.rawBody);
     console.log("Generated signature:", generatedSignature);
 
+    // Compare signatures using a timing-safe comparison
     if (
       !crypto.timingSafeEqual(
         Buffer.from(generatedSignature),
@@ -70,6 +68,7 @@ exports.verifyGithubSignature = async (req, res, next) => {
       return res.status(403).send("Forbidden: Invalid signature");
     }
 
+    // Proceed to the next middleware if signature is valid
     next();
   } catch (error) {
     console.error("Error verifying GitHub signature:", error);

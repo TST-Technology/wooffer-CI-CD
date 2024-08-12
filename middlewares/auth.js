@@ -15,7 +15,7 @@ exports.verifyGithubSignature = async (req, res, next) => {
   const projectName = req.body.repository.name;
   console.log("req.body----------------->", req.body);
   const projectConfig = projectsConfig[projectName];
-
+  console.log("projectConfig------------->", projectConfig);
   if (!projectConfig) {
     return res.status(400).send("Project not found");
   }

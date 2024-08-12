@@ -2,16 +2,19 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
+// Load project configurations
 const projectsConfigPath = path.join(__dirname, "../configs.json");
 const projectsConfig = JSON.parse(fs.readFileSync(projectsConfigPath, "utf8"));
 
+// Function to generate HMAC SHA-256 signature
 async function generateHmacSha256(secret, payload) {
   const hmac = crypto.createHmac("sha256", secret);
   hmac.update(payload);
   return `sha256=${hmac.digest("hex")}`;
 }
 
-exports.verifySignature = async (req, res, next) => {
+// Middleware to verify GitHub webhook signature
+exports.verifyGithubSignature = async (req, res, next) => {
   try {
     // Log the request body for debugging
     console.log("Received request body:", req.body);

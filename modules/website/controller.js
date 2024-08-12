@@ -7,13 +7,17 @@ const Queue = require("bull");
 const projectsConfigPath = path.join(__dirname, "../../configs.json");
 const projectsConfig = JSON.parse(fs.readFileSync(projectsConfigPath, "utf8"));
 
-const buildQueue = new Queue("build-queue");
+const buildQueue = new Queue("build-queue", {
+  redis: { host: "localhost", port: 6379 }, // Update as needed for your Redis configuration
+});
 
 buildQueue.process(async (job, done) => {
+  console.log(
+    `Processing job for ${job.data.projectName} with type ${job.data.type}`
+  );
   const { projectName, type } = job.data;
-  console.log(`Processing job for ${projectName} with type ${type}`);
-
   const projectConfig = projectsConfig[projectName];
+
   if (!projectConfig) {
     console.error(`Project configuration not found for ${projectName}`);
     return done(new Error(`Project not found: ${projectName}`));

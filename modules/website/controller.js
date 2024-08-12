@@ -100,7 +100,7 @@ const parseGithubPayload = (payload) => {
 };
 
 exports.gitPull = (req, res) => {
-  const projectName = req.headers["x-project"] || req.body?.project;
+  const projectName = req.body.repository.name;
   const { branchName, slackMessage } = parseGithubPayload(req.body);
 
   const projectConfig = projectsConfig[projectName];

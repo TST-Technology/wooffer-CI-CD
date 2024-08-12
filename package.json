@@ -1,5 +1,5 @@
 {
-  "name": "node-boilerplate",
+  "name": "ci-cd",
   "version": "1.0.0",
   "description": "Node.js- An extensive backend technology!",
   "main": "app.js",
@@ -7,7 +7,7 @@
   "author": "Deep Boda <deep@tsttechnology.in>",
   "license": "ISC",
   "engines": {
-    "node": "18.18.0"
+    "node": "18.x"
   },
   "repository": {
     "type": "git",

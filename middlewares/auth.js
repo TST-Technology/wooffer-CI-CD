@@ -14,7 +14,7 @@ async function generateHmacSha256(secret, payload) {
 exports.verifyGithubSignature = async (req, res, next) => {
   const projectName = req.body.repository.name;
   console.log("req.body----------------->", req.body);
-  const projectConfig = projectsConfig.projects[projectName];
+  const projectConfig = projectsConfig[projectName];
 
   if (!projectConfig) {
     return res.status(400).send("Project not found");

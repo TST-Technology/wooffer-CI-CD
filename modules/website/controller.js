@@ -11,7 +11,7 @@ const buildQueue = new Queue("build-queue");
 
 buildQueue.process(async (job, done) => {
   const { projectName, type } = job.data;
-  const projectConfig = projectsConfig.projects[projectName];
+  const projectConfig = projectsConfig[projectName];
 
   if (type === "git-pull") {
     await handleGitPull(projectConfig);
@@ -103,7 +103,7 @@ exports.gitPull = (req, res) => {
   const projectName = req.headers["x-project"] || req.body?.project;
   const { branchName, slackMessage } = parseGithubPayload(req.body);
 
-  const projectConfig = projectsConfig.projects[projectName];
+  const projectConfig = projectsConfig[projectName];
 
   if (projectConfig && branchName === projectConfig.targetBranch) {
     addBuildJobToQueue(projectName, "git-pull");
@@ -120,7 +120,7 @@ exports.gitPull = (req, res) => {
 exports.rebuild = (req, res) => {
   const projectName = req.headers["x-project"] || req.body?.project;
 
-  const projectConfig = projectsConfig.projects[projectName];
+  const projectConfig = projectsConfig[projectName];
 
   if (projectConfig) {
     addBuildJobToQueue(projectName, "rebuild");

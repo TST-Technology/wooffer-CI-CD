@@ -59,6 +59,7 @@ const handleRebuild = async (projectConfig) => {
     "",
     "#FFA500"
   );
+
   exec(projectConfig.buildCommand, async (error, stdout, stderr) => {
     if (error) {
       console.error("Build error:", error);
@@ -87,13 +88,11 @@ const parseGithubPayload = (payload) => {
   const branchDetails = payload?.ref?.split("/");
   const branchName = branchDetails?.[branchDetails.length - 1] || "";
   const userLoginName = payload?.sender?.login || "unknown";
-  const commitMessage = payload?.head_commit?.message || "no commit message";
   const isForcePush = payload?.forced || false;
 
   const slackMessage = `
     Branch: ${branchName}
     Sender: ${userLoginName}
-    Commit: ${commitMessage}
     ${isForcePush ? `Force Push: ${isForcePush}` : ""}
   `;
 
@@ -101,7 +100,7 @@ const parseGithubPayload = (payload) => {
 };
 
 exports.gitPull = (req, res) => {
-  const projectName = req.headers["x-project-name"] || req.body.projectName;
+  const projectName = req.headers["x-project"] || req.body?.project;
   const { branchName, slackMessage } = parseGithubPayload(req.body);
 
   const projectConfig = projectsConfig.projects[projectName];
@@ -119,7 +118,7 @@ exports.gitPull = (req, res) => {
 };
 
 exports.rebuild = (req, res) => {
-  const { projectName } = req.body;
+  const projectName = req.headers["x-project"] || req.body?.project;
 
   const projectConfig = projectsConfig.projects[projectName];
 

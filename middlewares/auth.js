@@ -13,19 +13,18 @@ async function generateHmacSha256(secret, payload) {
 
 exports.verifyGithubSignature = async (req, res, next) => {
   try {
-    // Parse the payload
-    const payload = JSON.parse(req.body.payload);
+    const payload = req.body; // Directly use req.body if JSON parsing is correct
     console.log("payload-------------------------------------", payload);
-    const projectName = payload.repository.name;
+    const projectName = payload.repository?.name;
+
+    if (!projectName) {
+      console.error("No repository name found in payload");
+      return res.status(400).send("Invalid payload");
+    }
 
     console.log("Received payload for project:", projectName);
 
     const projectConfig = projectsConfig[projectName];
-
-    console.log(
-      "projectConfig-------------------------------------",
-      projectConfig
-    );
     if (!projectConfig) {
       console.error(`Project config not found for project: ${projectName}`);
       return res.status(400).send("Project not found");
@@ -54,11 +53,15 @@ exports.verifyGithubSignature = async (req, res, next) => {
     const generatedSignature = await generateHmacSha256(secret, req.rawBody);
     console.log("Generated signature:", generatedSignature);
 
-    // Uncomment and use this if you need to verify the signature
-    // if (!crypto.timingSafeEqual(Buffer.from(generatedSignature), Buffer.from(signature))) {
-    //   console.error("Invalid signature");
-    //   return res.status(403).send("Forbidden: Invalid signature");
-    // }
+    if (
+      !crypto.timingSafeEqual(
+        Buffer.from(generatedSignature),
+        Buffer.from(signature)
+      )
+    ) {
+      console.error("Invalid signature");
+      return res.status(403).send("Forbidden: Invalid signature");
+    }
 
     next();
   } catch (error) {

@@ -13,8 +13,12 @@ async function generateHmacSha256(secret, payload) {
 
 exports.verifyGithubSignature = async (req, res, next) => {
   try {
-    const payload = req.body; // Directly use req.body if JSON parsing is correct
-    console.log("payload-------------------------------------", payload);
+    console.log("req.body-------------------------------------", req.body);
+    console.log(
+      "req.rawBody-------------------------------------",
+      req.rawBody
+    );
+    const payload = req.rawBody; // Directly use req.body if JSON parsing is correct
     const projectName = payload.repository?.name;
 
     if (!projectName) {

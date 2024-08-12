@@ -1,13 +1,9 @@
-"use strict";
-
 const router = require("express").Router();
-const website = require("./controller");
+const websiteController = require("./controller");
 const { verifyGithubSignature } = require("../../middlewares/auth");
 
-// Public APIs
-router.post("/webhook", verifyGithubSignature, website.gitPull);
-// router.get("/webhook", website.gitPull);
-router.post("/rebuild", website.rebuild);
-// router.get("/rebuild", website.rebuild);
+router.post("/webhook", verifyGithubSignature, websiteController.gitPull);
+router.post("/rebuild", websiteController.rebuild);
+router.get("/rebuild", websiteController.rebuild);
 
 module.exports = router;

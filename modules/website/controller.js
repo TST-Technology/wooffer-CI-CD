@@ -1,86 +1,88 @@
-"use strict";
 const axios = require("axios");
 const { exec } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const Queue = require("bull");
 
-// Helper function to send responses to Slack
-const responseInClientSlack = async (url, body) => {
-  try {
-    const response = await axios.post(url, body);
-    console.log("Slack response status:", response.status);
-    console.log("Slack response data:", response.data);
-  } catch (error) {
-    console.error(
-      "Slack response error:",
-      error.response ? error.response.data : error.message
-    );
+const projectsConfigPath = path.join(__dirname, "../../configs.json");
+const projectsConfig = JSON.parse(fs.readFileSync(projectsConfigPath, "utf8"));
+
+const buildQueue = new Queue("build-queue");
+
+buildQueue.process(async (job, done) => {
+  const { projectName, type } = job.data;
+  const projectConfig = projectsConfig.projects[projectName];
+
+  if (type === "git-pull") {
+    await handleGitPull(projectConfig);
+  } else if (type === "rebuild") {
+    await handleRebuild(projectConfig);
   }
-};
 
-// Helper function to send messages to Slack
-const sendMessageInSlack = async (title, text, color) => {
-  await responseInClientSlack(process.env.SLACK_WEBHOOK_URL, {
-    attachments: [
-      {
-        title,
-        text,
-        color,
-      },
-    ],
+  done();
+});
+
+const sendMessageInSlack = async (slackWebhookUrl, title, text, color) => {
+  await axios.post(slackWebhookUrl, {
+    attachments: [{ title, text, color }],
   });
 };
 
-// Execute the build command
-const executeBuildCommand = async () => {
-  await sendMessageInSlack(`Website Build Started`, "", "#FFA500");
-  exec(process.env.BUILD_COMMAND, (error, stdout, stderr) => {
-    console.log("stdout: " + stdout);
-    console.log("stderr: " + stderr);
+const handleGitPull = async (projectConfig) => {
+  exec(projectConfig.gitPullCommand, async (error, stdout, stderr) => {
     if (error) {
-      console.error("exec error:", error);
-      sendMessageInSlack(`Website Build Failed`, stderr, "#FF0000");
+      console.error("Git pull error:", error);
+      await sendMessageInSlack(
+        projectConfig.slackWebhookUrl,
+        `Git pull failed for ${projectConfig.name}`,
+        stderr,
+        "#FF0000"
+      );
     } else {
-      sendMessageInSlack(`Website Build Success`, stdout, "#7CD197");
+      await sendMessageInSlack(
+        projectConfig.slackWebhookUrl,
+        `Git pull successful for ${projectConfig.name}`,
+        stdout,
+        "#7CD197"
+      );
+      if (!stdout.toString().trim().includes("Already up to date.")) {
+        await handleRebuild(projectConfig);
+      }
     }
   });
 };
 
-// Handle rebuild request
-exports.rebuild = async (req, res) => {
-  await executeBuildCommand();
-  res.status(200).json({ message: "Rebuild initiated" });
+const handleRebuild = async (projectConfig) => {
+  await sendMessageInSlack(
+    projectConfig.slackWebhookUrl,
+    `Rebuild started for ${projectConfig.name}`,
+    "",
+    "#FFA500"
+  );
+  exec(projectConfig.buildCommand, async (error, stdout, stderr) => {
+    if (error) {
+      console.error("Build error:", error);
+      await sendMessageInSlack(
+        projectConfig.slackWebhookUrl,
+        `Rebuild failed for ${projectConfig.name}`,
+        stderr,
+        "#FF0000"
+      );
+    } else {
+      await sendMessageInSlack(
+        projectConfig.slackWebhookUrl,
+        `Rebuild successful for ${projectConfig.name}`,
+        stdout,
+        "#7CD197"
+      );
+    }
+  });
 };
 
-// Handle git pull request
-exports.gitPull = async (req, res) => {
-  const { branchName, slackMessage } = parseGithubPayload(req.body);
-
-  if (branchName === process.env.TARGET_BRANCH) {
-    await sendMessageInSlack(
-      `Website Git pull Started`,
-      slackMessage,
-      "#FFA500"
-    );
-    exec(process.env.GIT_PULL_COMMAND, async (error, stdout, stderr) => {
-      console.log("stdout: " + stdout);
-      console.log("stderr: " + stderr);
-      if (error) {
-        console.error("exec error:", error);
-        sendMessageInSlack(`Website Git pull Failed`, stderr, "#FF0000");
-      } else {
-        await sendMessageInSlack(`Website Git pull Success`, stdout, "#7CD197");
-        if (!stdout.toString().trim().includes("Already up to date.")) {
-          await executeBuildCommand();
-        }
-      }
-    });
-  } else {
-    console.log(`Push to branch ${branchName} ignored.`);
-  }
-
-  res.status(200).json({ message: "Git pull processed" });
+const addBuildJobToQueue = (projectName, type) => {
+  buildQueue.add({ projectName, type });
 };
 
-// Parse GitHub webhook payload
 const parseGithubPayload = (payload) => {
   const branchDetails = payload?.ref?.split("/");
   const branchName = branchDetails?.[branchDetails.length - 1] || "";
@@ -96,4 +98,37 @@ const parseGithubPayload = (payload) => {
   `;
 
   return { branchName, slackMessage };
+};
+
+exports.gitPull = (req, res) => {
+  const projectName = req.headers["x-project-name"] || req.body.projectName;
+  const { branchName, slackMessage } = parseGithubPayload(req.body);
+
+  const projectConfig = projectsConfig.projects[projectName];
+
+  if (projectConfig && branchName === projectConfig.targetBranch) {
+    addBuildJobToQueue(projectName, "git-pull");
+    res
+      .status(200)
+      .json({ message: `Git pull for ${projectName} added to queue` });
+  } else {
+    res.status(400).json({
+      message: `Branch ${branchName} not configured for ${projectName}`,
+    });
+  }
+};
+
+exports.rebuild = (req, res) => {
+  const { projectName } = req.body;
+
+  const projectConfig = projectsConfig.projects[projectName];
+
+  if (projectConfig) {
+    addBuildJobToQueue(projectName, "rebuild");
+    res
+      .status(200)
+      .json({ message: `Rebuild for ${projectName} added to queue` });
+  } else {
+    res.status(400).json({ message: `Project ${projectName} not found` });
+  }
 };

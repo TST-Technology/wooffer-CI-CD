@@ -1,4 +1,9 @@
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+const projectsConfigPath = path.join(__dirname, "../configs.json");
+const projectsConfig = JSON.parse(fs.readFileSync(projectsConfigPath, "utf8"));
 
 async function generateHmacSha256(secret, payload) {
   const hmac = crypto.createHmac("sha256", secret);
@@ -7,13 +12,20 @@ async function generateHmacSha256(secret, payload) {
 }
 
 exports.verifyGithubSignature = async (req, res, next) => {
-  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+  const projectName = req.body.repository.name;
+  const projectConfig = projectsConfig.projects[projectName];
+
+  if (!projectConfig) {
+    return res.status(400).send("Project not found");
+  }
+
+  const secret = projectConfig.githubWebhookSecret;
   const signature = req.headers["x-hub-signature-256"];
 
   if (!secret) {
     return res
       .status(403)
-      .send("Forbidden: GITHUB_WEBHOOK_SECRET environment variable is not set");
+      .send("Forbidden: GitHub Webhook Secret is not set for this project");
   }
 
   if (!signature) {

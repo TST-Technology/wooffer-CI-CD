@@ -11,21 +11,37 @@ const buildQueue = new Queue("build-queue");
 
 buildQueue.process(async (job, done) => {
   const { projectName, type } = job.data;
-  const projectConfig = projectsConfig[projectName];
+  console.log(`Processing job for ${projectName} with type ${type}`);
 
-  if (type === "git-pull") {
-    await handleGitPull(projectConfig);
-  } else if (type === "rebuild") {
-    await handleRebuild(projectConfig);
+  const projectConfig = projectsConfig[projectName];
+  if (!projectConfig) {
+    console.error(`Project configuration not found for ${projectName}`);
+    return done(new Error(`Project not found: ${projectName}`));
+  }
+
+  try {
+    if (type === "git-pull") {
+      console.log(`Starting git pull for ${projectName}`);
+      await handleGitPull(projectConfig);
+    } else if (type === "rebuild") {
+      console.log(`Starting rebuild for ${projectName}`);
+      await handleRebuild(projectConfig);
+    }
+  } catch (error) {
+    console.error(`Error processing job for ${projectName}:`, error);
   }
 
   done();
 });
 
 const sendMessageInSlack = async (slackWebhookUrl, title, text, color) => {
-  await axios.post(slackWebhookUrl, {
-    attachments: [{ title, text, color }],
-  });
+  try {
+    await axios.post(slackWebhookUrl, {
+      attachments: [{ title, text, color }],
+    });
+  } catch (error) {
+    console.error("Error sending Slack message:", error);
+  }
 };
 
 const handleGitPull = async (projectConfig) => {

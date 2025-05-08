@@ -3,8 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 // Load project configurations
-const projectsConfigPath = path.join(__dirname, "../configs.json");
-const projectsConfig = JSON.parse(fs.readFileSync(projectsConfigPath, "utf8"));
+const configPath = path.join(__dirname, "../config.json");
+const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
 // Function to generate HMAC SHA-256 signature
 async function generateHmacSha256(secret, payload) {
@@ -13,30 +13,37 @@ async function generateHmacSha256(secret, payload) {
   return `sha256=${hmac.digest("hex")}`;
 }
 
+// Helper function to find project by URL
+function findProjectByUrl(repoUrl) {
+  // Normalize URL by removing any trailing .git
+  const normalizedUrl = repoUrl.replace(/\.git$/, "");
+  return config[normalizedUrl];
+}
+
 // Middleware to verify GitHub webhook signature
 exports.verifyGithubSignature = async (req, res, next) => {
   try {
     // Log the request body for debugging
     console.log("Received request body:", req.body);
 
-    // Extract repository name from the payload
-    const projectName = req.body.repository?.name;
+    // Extract repository URL from the payload
+    const repoUrl = req.body.repository?.html_url;
 
-    if (!projectName) {
-      console.error("No repository name found in payload");
+    if (!repoUrl) {
+      console.error("No repository URL found in payload");
       return res.status(400).send("Invalid payload");
     }
 
-    console.log("Received payload for project:", projectName);
+    console.log("Received payload for repository:", repoUrl);
 
     // Load project-specific configuration
-    const projectConfig = projectsConfig[projectName];
-    if (!projectConfig) {
-      console.error(`Project config not found for project: ${projectName}`);
+    const project = findProjectByUrl(repoUrl);
+    if (!project) {
+      console.error(`Project config not found for repository: ${repoUrl}`);
       return res.status(400).send("Project not found");
     }
 
-    const secret = projectConfig.githubWebhookSecret;
+    const secret = project.secret;
     const signature = req.headers["x-hub-signature-256"];
 
     console.log("Received signature:", signature);

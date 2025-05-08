@@ -2,8 +2,8 @@ const axios = require("axios");
 const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const Queue = require("bull");
 const util = require("util");
+const moment = require("moment");
 
 // Convert exec to promise
 const execPromise = util.promisify(exec);
@@ -12,9 +12,9 @@ const execPromise = util.promisify(exec);
 const configPath = path.join(__dirname, "../../config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
-const buildQueue = new Queue("build-queue", {
-  redis: { host: "localhost", port: 6379 }, // Update as needed for your Redis configuration
-});
+// In-memory job queue
+const jobQueue = [];
+let isProcessing = false;
 
 // Helper function to find project by URL
 function findProjectByUrl(repoUrl) {
@@ -45,118 +45,217 @@ function getAvailableBranches(project) {
   return Object.keys(project.environments);
 }
 
-buildQueue.process(async (job, done) => {
+// Add job to queue
+function addJobToQueue(job) {
+  console.log(`Adding job to queue: ${job.repoUrl} (${job.branchName})`);
+
+  // Add timestamp and trigger info
+  job.timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+
+  jobQueue.push(job);
+
+  // Start processing if not already in progress
+  if (!isProcessing) {
+    processNextJob();
+  }
+
+  return { position: jobQueue.length };
+}
+
+// Process next job in queue
+async function processNextJob() {
+  if (jobQueue.length === 0) {
+    isProcessing = false;
+    return;
+  }
+
+  isProcessing = true;
+  const job = jobQueue.shift();
+
   try {
     console.log(
-      `Processing job for ${job.data.repoUrl} with branch ${job.data.branchName}`
+      `Processing job for ${job.repoUrl} with branch ${job.branchName}`
     );
-    const { repoUrl, branchName } = job.data;
 
     // Find project and environment configuration
-    const project = findProjectByUrl(repoUrl);
+    const project = findProjectByUrl(job.repoUrl);
     if (!project) {
-      return done(new Error(`Project not found for repository: ${repoUrl}`));
+      console.error(`Project not found for repository: ${job.repoUrl}`);
+      processNextJob();
+      return;
     }
 
-    const environment = findEnvironmentForBranch(project, branchName);
+    const environment = findEnvironmentForBranch(project, job.branchName);
     if (!environment) {
-      return done(new Error(`Environment not found for branch: ${branchName}`));
+      console.error(`Environment not found for branch: ${job.branchName}`);
+      processNextJob();
+      return;
     }
 
     // Execute the deployment
-    await executeDeployment(project, branchName, environment);
-    done();
+    await executeDeployment(project, job.branchName, environment, job);
+
+    // Process next job
+    processNextJob();
   } catch (error) {
     console.error(`Error processing job:`, error);
-    done(error);
+    processNextJob();
   }
-});
+}
 
-const sendMessageInSlack = async (webhookUrl, title, text, color) => {
+const sendMessageInSlack = async (webhookUrl, payload) => {
   try {
-    await axios.post(webhookUrl, {
-      attachments: [{ title, text, color }],
-    });
+    await axios.post(webhookUrl, payload);
   } catch (error) {
     console.error("Error sending Slack message:", error);
   }
 };
 
 // Execute a single command in the specified directory
-const executeCommand = async (command, cwd, webhookUrl, projectName) => {
+const executeCommand = async (
+  command,
+  cwd,
+  webhookUrl,
+  projectName,
+  deploymentInfo
+) => {
   try {
-    // Notify command starting
-    await sendMessageInSlack(
-      webhookUrl,
-      `Command started for ${projectName}`,
-      `Executing: ${command}`,
-      "#FFA500" // Orange for in-progress
-    );
-
-    // Execute command
+    // Execute command without Slack notification
+    console.log(`Executing command: ${command} in ${cwd}`);
     const { stdout, stderr } = await execPromise(command, { cwd });
-
-    // Notify success
-    await sendMessageInSlack(
-      webhookUrl,
-      `Command successful for ${projectName}`,
-      `Command: ${command}\nOutput: ${stdout.substring(0, 500)}${
-        stdout.length > 500 ? "..." : ""
-      }`,
-      "#7CD197" // Green for success
-    );
+    console.log(`Command succeeded: ${command}`);
 
     return { success: true, stdout, stderr };
   } catch (error) {
-    // Notify failure
-    await sendMessageInSlack(
-      webhookUrl,
-      `Command failed for ${projectName}`,
-      `Command: ${command}\nError: ${error.message}`,
-      "#FF0000" // Red for failure
-    );
+    console.error(`Command failed: ${command}`, error);
+
+    // Send notification for failed command with detailed information
+    await sendMessageInSlack(webhookUrl, {
+      attachments: [
+        {
+          color: "#FF0000", // Red for failure
+          title: `⚠️ Command Failed During Deployment`,
+          text: `A command failed while deploying ${projectName}`,
+          fields: [
+            {
+              title: "Failed Command",
+              value: command,
+            },
+            {
+              title: "Error Message",
+              value: error.message,
+            },
+            {
+              title: "Directory",
+              value: cwd,
+            },
+          ],
+          footer: "Wooffer CI/CD",
+          ts: Math.floor(Date.now() / 1000),
+        },
+      ],
+    });
 
     throw error;
   }
 };
 
 // Execute all commands for a deployment
-const executeDeployment = async (project, branchName, environment) => {
+const executeDeployment = async (project, branchName, environment, job) => {
   const { name } = project;
   const { deployPath, commands, slackWebhookUrl } = environment;
+  const triggeredBy = job.triggeredBy || "Unknown";
+  const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
 
-  // Send deployment started notification
-  await sendMessageInSlack(
-    slackWebhookUrl,
-    `Deployment Started: ${name}`,
-    `Starting deployment for ${name} (${branchName}) in ${deployPath}`,
-    "#FFA500" // Orange for in-progress
-  );
+  // Send deployment started notification with comprehensive information
+  await sendMessageInSlack(slackWebhookUrl, {
+    attachments: [
+      {
+        color: "#FFA500", // Orange for in-progress
+        title: `🚀 Deployment Started: ${name}`,
+        text: `Starting deployment for ${name} (${branchName})`,
+        fields: [
+          {
+            title: "Project",
+            value: name,
+            short: true,
+          },
+          {
+            title: "Branch",
+            value: branchName,
+            short: true,
+          },
+          {
+            title: "Triggered By",
+            value: triggeredBy,
+            short: true,
+          },
+          {
+            title: "Time Started",
+            value: timestamp,
+            short: true,
+          },
+        ],
+        footer: "Wooffer CI/CD",
+        ts: Math.floor(Date.now() / 1000),
+      },
+    ],
+  });
 
   try {
-    // Execute commands sequentially
+    // Execute commands sequentially without individual notifications
     for (const command of commands) {
       await executeCommand(command, deployPath, slackWebhookUrl, name);
     }
 
-    // All commands succeeded
-    await sendMessageInSlack(
-      slackWebhookUrl,
-      `Deployment Completed: ${name}`,
-      `Successfully deployed ${name} (${branchName})`,
-      "#7CD197" // Green for success
-    );
+    // Only send notification upon successful completion of all commands
+    await sendMessageInSlack(slackWebhookUrl, {
+      attachments: [
+        {
+          color: "#7CD197", // Green for success
+          title: `✅ Deployment Completed: ${name}`,
+          text: `Successfully deployed ${name} (${branchName})`,
+          fields: [
+            {
+              title: "Project",
+              value: name,
+              short: true,
+            },
+            {
+              title: "Branch",
+              value: branchName,
+              short: true,
+            },
+            {
+              title: "Triggered By",
+              value: triggeredBy,
+              short: true,
+            },
+            {
+              title: "Time Completed",
+              value: moment().format("YYYY-MM-DD HH:mm:ss"),
+              short: true,
+            },
+            {
+              title: "Duration",
+              value:
+                moment().diff(
+                  moment(timestamp, "YYYY-MM-DD HH:mm:ss"),
+                  "minutes"
+                ) + " minutes",
+              short: true,
+            },
+          ],
+          footer: "Wooffer CI/CD",
+          ts: Math.floor(Date.now() / 1000),
+        },
+      ],
+    });
 
     return { success: true };
   } catch (error) {
-    // Handle any command failures
-    await sendMessageInSlack(
-      slackWebhookUrl,
-      `Deployment Failed: ${name}`,
-      `Deployment failed for ${name} (${branchName}): ${error.message}`,
-      "#FF0000" // Red for failure
-    );
-
+    // No additional failure notification - the individual command failure is enough
+    console.error(`Deployment failed: ${error.message}`);
     return { success: false, error: error.message };
   }
 };
@@ -175,11 +274,13 @@ const parseGithubPayload = (payload) => {
     ${isForcePush ? `Force Push: ${isForcePush}` : ""}
   `;
 
-  return { branchName, repoUrl, slackMessage };
+  return { branchName, repoUrl, slackMessage, triggeredBy: userLoginName };
 };
 
 exports.gitPull = (req, res) => {
-  const { branchName, repoUrl } = parseGithubPayload(req.body);
+  const { branchName, repoUrl, triggeredBy } = parseGithubPayload(req.body);
+
+  console.log(branchName, repoUrl);
 
   if (!repoUrl) {
     return res.status(400).json({
@@ -189,6 +290,7 @@ exports.gitPull = (req, res) => {
 
   // Find project configuration
   const project = findProjectByUrl(repoUrl);
+  console.log(project);
   if (!project) {
     return res.status(400).json({
       message: `Project not configured for repository: ${repoUrl}`,
@@ -197,6 +299,7 @@ exports.gitPull = (req, res) => {
 
   // Find environment for the branch
   const environment = findEnvironmentForBranch(project, branchName);
+  console.log(environment);
   if (!environment) {
     return res.status(400).json({
       message: `Branch ${branchName} not configured for ${project.name}`,
@@ -204,15 +307,17 @@ exports.gitPull = (req, res) => {
   }
 
   // Add to queue
-  buildQueue.add({ repoUrl, branchName });
+  const jobInfo = addJobToQueue({ repoUrl, branchName, triggeredBy });
   res.status(200).json({
-    message: `Deployment for ${project.name} (${branchName}) added to queue`,
+    message: `Deployment for ${project.name} (${branchName}) added to queue at position ${jobInfo.position}`,
   });
 };
 
 exports.rebuild = (req, res) => {
   const projectName = req.headers["x-project"] || req.body?.project;
   const branchName = req.headers["x-branch"] || req.body?.branch;
+  const triggeredBy =
+    req.headers["x-triggered-by"] || req.body?.triggeredBy || "Manual Trigger";
 
   if (!projectName) {
     return res.status(400).json({
@@ -234,9 +339,13 @@ exports.rebuild = (req, res) => {
   // If branch is not specified but project has only one environment, use that
   if (!branchName && availableBranches.length === 1) {
     const singleBranch = availableBranches[0];
-    buildQueue.add({ repoUrl, branchName: singleBranch });
+    const jobInfo = addJobToQueue({
+      repoUrl,
+      branchName: singleBranch,
+      triggeredBy,
+    });
     return res.status(200).json({
-      message: `Deployment for ${projectName} (${singleBranch}) added to queue`,
+      message: `Deployment for ${projectName} (${singleBranch}) added to queue at position ${jobInfo.position}`,
     });
   }
 
@@ -260,8 +369,8 @@ exports.rebuild = (req, res) => {
   }
 
   // Add to queue
-  buildQueue.add({ repoUrl, branchName });
+  const jobInfo = addJobToQueue({ repoUrl, branchName, triggeredBy });
   res.status(200).json({
-    message: `Deployment for ${projectName} (${branchName}) added to queue`,
+    message: `Deployment for ${projectName} (${branchName}) added to queue at position ${jobInfo.position}`,
   });
 };

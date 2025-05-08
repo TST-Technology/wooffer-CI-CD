@@ -7,6 +7,7 @@ A flexible CI/CD service that supports centralized deployment for multiple proje
 - Support for multiple projects with multiple environments (production, staging, etc.)
 - GitHub webhook integration for automatic deployments
 - Manual deployment triggering via API
+- In-memory job queue for processing deployments
 - Slack notifications for deployment status
 - Sequential command execution with per-command status updates
 - Secret validation for security
@@ -60,6 +61,13 @@ The deployment configuration is stored in `config.json` in the root directory. T
       - **deployPath**: Absolute path where the code is deployed
       - **slackWebhookUrl**: Slack webhook URL for notifications
       - **commands**: Array of commands to be executed sequentially
+
+## How It Works
+
+1. When a webhook is received or manual deployment is triggered, a job is added to the in-memory queue
+2. Jobs are processed sequentially, executing the commands specified in the configuration
+3. Each step of the deployment process sends notifications to Slack
+4. The queue automatically processes the next job when the current one completes
 
 ## API Endpoints
 

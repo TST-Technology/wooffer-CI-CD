@@ -2,6 +2,72 @@
 
 A flexible CI/CD service that supports centralized deployment for multiple projects, regardless of their stack (Node.js, React, etc.).
 
+## Quick Start with NPX
+
+The easiest way to set up Wooffer CI/CD is using npx:
+
+```bash
+npx wooffer-ci-cd@latest
+```
+
+This command will:
+
+1. Create a new folder named `wooffer-ci-cd` in your current directory
+2. Set up all necessary files inside this folder
+3. Create a config.json file with example configuration (you must modify this with your actual settings)
+4. Install all required dependencies
+5. Provide instructions on next steps
+
+After installation, you should:
+
+```bash
+# Navigate to the wooffer-ci-cd directory
+cd wooffer-ci-cd
+
+# Edit the config.json file to replace example values with your actual configuration
+nano config.json  # or use any text editor
+
+# Start the service once configuration is complete
+npm start
+```
+
+## Important: Default Configuration
+
+The installation provides a default configuration in `config.json` that looks like this:
+
+```json
+{
+  "https://github.com/your-org/your-repo": {
+    "name": "example-project",
+    "secret": "your-github-webhook-secret-here",
+    "environments": {
+      "main": {
+        "deployPath": "/path/to/your/project",
+        "slackWebhookUrl": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "commands": [
+          "git restore .",
+          "git pull",
+          "npm install",
+          "npm run build",
+          "pm2 restart example-app"
+        ]
+      }
+    }
+  }
+}
+```
+
+You **must** edit this file to replace:
+
+- The GitHub repository URL (`https://github.com/your-org/your-repo`)
+- The project name (`example-project`)
+- The secret key (`your-github-webhook-secret-here`)
+- The deploy path (`/path/to/your/project`)
+- The Slack webhook URL (`https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK`)
+- The commands, if needed
+
+The service will not work properly until this configuration is updated with your actual values.
+
 ## Features
 
 - Support for multiple projects with multiple environments (production, staging, etc.)

@@ -1,56 +1,53 @@
 {
-  "name": "ci-cd",
-  "version": "1.0.0",
-  "description": "Node.js- An extensive backend technology!",
+  "name": "wooffer-ci-cd",
+  "version": "1.0.2",
+  "description": "A simple CI/CD service for automated deployments with GitHub webhooks and Slack notifications",
   "main": "app.js",
-  "private": true,
+  "private": false,
+  "bin": {
+    "wooffer-ci-cd": "./bin/cli.js"
+  },
   "author": "Deep Boda <deep@tsttechnology.in>",
   "license": "ISC",
   "engines": {
-    "node": "18.x"
+    "node": ">=14.x"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/TST-Technology/node-boilerplat.git"
+    "url": "https://github.com/TST-Technology/wooffer-CI-CD"
   },
   "keywords": [
-    "Node.js",
-    "TST",
-    "Technology"
-  ],
-  "maintainers": [
-    {
-      "name": "Deep Boda",
-      "email": "deep@tsttechnology.in",
-      "signature": "DP"
-    },
-    {
-      "name": "Hiren Kalariya",
-      "email": "kalariyahiren74@gmail.com",
-      "signature": "HK"
-    }
+    "ci-cd",
+    "github",
+    "webhook",
+    "slack",
+    "automation",
+    "deployment",
+    "wooffer"
   ],
   "scripts": {
     "start": "node ./bin/www",
     "dev": "nodemon ./bin/www"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.337.0",
-    "@faker-js/faker": "^7.6.0",
     "axios": "^1.7.3",
-    "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cookie-parser": "~1.4.4",
     "cors": "^2.8.5",
     "debug": "~2.6.9",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^6.7.0",
     "helmet": "^7.1.0",
     "http-errors": "^2.0.0",
-    "joi": "^17.9.1",
-    "jsonwebtoken": "^9.0.2",
     "moment": "^2.29.4",
     "morgan": "~1.9.1"
-  }
+  },
+  "files": [
+    "bin",
+    "middlewares",
+    "modules",
+    "routes",
+    "app.js",
+    "README.md"
+  ]
 }

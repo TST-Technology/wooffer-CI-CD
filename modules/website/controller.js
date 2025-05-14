@@ -52,14 +52,118 @@ function addJobToQueue(job) {
   // Add timestamp and trigger info
   job.timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
 
+  // Find project and environment configuration for Slack notification
+  const project = findProjectByUrl(job.repoUrl);
+  if (!project) {
+    console.error(`Project not found for repository: ${job.repoUrl}`);
+    return { position: -1 };
+  }
+
+  const environment = findEnvironmentForBranch(project, job.branchName);
+  if (!environment) {
+    console.error(`Environment not found for branch: ${job.branchName}`);
+    return { position: -1 };
+  }
+
   jobQueue.push(job);
+  const queuePosition = jobQueue.length;
+  console.log(isProcessing, queuePosition);
+  // If there's already a job running or other jobs in the queue, send a queued notification
+  if (isProcessing || queuePosition > 1) {
+    // Send queued notification
+    console.log(
+      "Send Notification",
+      project,
+      job.branchName,
+      environment,
+      job,
+      isProcessing,
+      queuePosition
+    );
+    sendQueuedNotification(
+      project,
+      job.branchName,
+      environment,
+      job,
+      queuePosition
+    );
+  }
 
   // Start processing if not already in progress
   if (!isProcessing) {
     processNextJob();
   }
 
-  return { position: jobQueue.length };
+  return { position: queuePosition };
+}
+
+// Send queued notification to Slack
+async function sendQueuedNotification(
+  project,
+  branchName,
+  environment,
+  job,
+  position
+) {
+  console.log(
+    "Send Notification",
+    project,
+    branchName,
+    environment,
+    job,
+    position
+  );
+  const { name } = project;
+  const { slackWebhookUrl } = environment;
+  const triggeredBy = job.triggeredBy || "Unknown";
+  const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
+  const jobsAhead = position - 1;
+
+  // Send queued notification with queue position
+  await sendMessageInSlack(slackWebhookUrl, {
+    attachments: [
+      {
+        color: "#808080", // Gray for queued
+        title: `⏳ Deployment Queued: ${name}`,
+        text: `Deployment for ${name} (${branchName}) has been queued${
+          jobsAhead > 0
+            ? ` at position #${position} (${jobsAhead} ${
+                jobsAhead === 1 ? "job" : "jobs"
+              } ahead)`
+            : ""
+        }`,
+        fields: [
+          {
+            title: "Project",
+            value: name,
+            short: true,
+          },
+          {
+            title: "Branch",
+            value: branchName,
+            short: true,
+          },
+          {
+            title: "Triggered By",
+            value: triggeredBy,
+            short: true,
+          },
+          {
+            title: "Time Queued",
+            value: timestamp,
+            short: true,
+          },
+          {
+            title: "Status",
+            value: "Queued",
+            short: true,
+          },
+        ],
+        footer: "Wooffer CI/CD",
+        ts: Math.floor(Date.now() / 1000),
+      },
+    ],
+  });
 }
 
 // Process next job in queue
@@ -95,10 +199,11 @@ async function processNextJob() {
     // Execute the deployment
     await executeDeployment(project, job.branchName, environment, job);
 
-    // Process next job
+    // Process next job automatically
     processNextJob();
   } catch (error) {
     console.error(`Error processing job:`, error);
+    // Process next job even if there's an error
     processNextJob();
   }
 }

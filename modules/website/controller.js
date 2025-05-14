@@ -71,6 +71,15 @@ function addJobToQueue(job) {
   // If there's already a job running or other jobs in the queue, send a queued notification
   if (isProcessing || queuePosition > 1) {
     // Send queued notification
+    console.log(
+      "Send Notification",
+      project,
+      job.branchName,
+      environment,
+      job,
+      isProcessing,
+      queuePosition
+    );
     sendQueuedNotification(
       project,
       job.branchName,
@@ -96,6 +105,14 @@ async function sendQueuedNotification(
   job,
   position
 ) {
+  console.log(
+    "Send Notification",
+    project,
+    branchName,
+    environment,
+    job,
+    position
+  );
   const { name } = project;
   const { slackWebhookUrl } = environment;
   const triggeredBy = job.triggeredBy || "Unknown";

@@ -67,19 +67,8 @@ function addJobToQueue(job) {
 
   jobQueue.push(job);
   const queuePosition = jobQueue.length;
-  console.log(isProcessing, queuePosition);
   // If there's already a job running or other jobs in the queue, send a queued notification
   if (isProcessing || queuePosition > 1) {
-    // Send queued notification
-    console.log(
-      "Send Notification",
-      project,
-      job.branchName,
-      environment,
-      job,
-      isProcessing,
-      queuePosition
-    );
     sendQueuedNotification(
       project,
       job.branchName,
@@ -105,14 +94,6 @@ async function sendQueuedNotification(
   job,
   position
 ) {
-  console.log(
-    "Send Notification",
-    project,
-    branchName,
-    environment,
-    job,
-    position
-  );
   const { name } = project;
   const { slackWebhookUrl } = environment;
   const triggeredBy = job.triggeredBy || "Unknown";
@@ -385,8 +366,6 @@ const parseGithubPayload = (payload) => {
 exports.gitPull = (req, res) => {
   const { branchName, repoUrl, triggeredBy } = parseGithubPayload(req.body);
 
-  console.log(branchName, repoUrl);
-
   if (!repoUrl) {
     return res.status(400).json({
       message: "Repository URL not found in webhook payload",
@@ -395,7 +374,6 @@ exports.gitPull = (req, res) => {
 
   // Find project configuration
   const project = findProjectByUrl(repoUrl);
-  console.log(project);
   if (!project) {
     return res.status(400).json({
       message: `Project not configured for repository: ${repoUrl}`,
@@ -404,7 +382,6 @@ exports.gitPull = (req, res) => {
 
   // Find environment for the branch
   const environment = findEnvironmentForBranch(project, branchName);
-  console.log(environment);
   if (!environment) {
     return res.status(400).json({
       message: `Branch ${branchName} not configured for ${project.name}`,

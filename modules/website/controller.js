@@ -67,7 +67,7 @@ function addJobToQueue(job) {
 
   jobQueue.push(job);
   const queuePosition = jobQueue.length;
-
+  console.log(isProcessing, queuePosition);
   // If there's already a job running or other jobs in the queue, send a queued notification
   if (isProcessing || queuePosition > 1) {
     // Send queued notification

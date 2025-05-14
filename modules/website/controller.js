@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const util = require("util");
 const moment = require("moment");
+const os = require("os");
 
 // Convert exec to promise
 const execPromise = util.promisify(exec);
@@ -206,14 +207,120 @@ const executeCommand = async (
   deploymentInfo
 ) => {
   try {
-    // Execute command without Slack notification
+    // Execute command with elevated privileges based on platform
     console.log(`Executing command: ${command} in ${cwd}`);
-    const { stdout, stderr } = await execPromise(command, { cwd });
-    console.log(`Command succeeded: ${command}`);
 
-    return { success: true, stdout, stderr };
+    const platform = os.platform();
+    let result;
+
+    if (platform === "win32") {
+      // Windows - use cmd.exe with runas for elevation
+      try {
+        // Create a temporary batch file to run the command with elevation
+        const tempBatchPath = path.join(
+          os.tmpdir(),
+          `wooffer_elevated_${Date.now()}.bat`
+        );
+
+        // Create batch file content - includes working directory change and command execution
+        const batchContent = `@echo off
+cd /d "${cwd}"
+${command}
+exit /b %errorlevel%`;
+
+        // Write the batch file
+        fs.writeFileSync(tempBatchPath, batchContent);
+
+        // Run the batch file with runas command for elevation
+        result = await execPromise(
+          `runas /trustlevel:0x20000 "cmd.exe /c ${tempBatchPath}"`
+        );
+
+        // Clean up the temporary batch file
+        try {
+          fs.unlinkSync(tempBatchPath);
+        } catch (cleanupError) {
+          console.warn(
+            `Failed to remove temporary batch file: ${cleanupError.message}`
+          );
+        }
+      } catch (elevationError) {
+        console.error(
+          `Failed to elevate command on Windows: ${elevationError.message}`
+        );
+
+        // Second attempt with different elevation approach - using ShellExecute
+        try {
+          const vbsPath = path.join(
+            os.tmpdir(),
+            `wooffer_elevated_${Date.now()}.vbs`
+          );
+          const batchPath = path.join(
+            os.tmpdir(),
+            `wooffer_command_${Date.now()}.bat`
+          );
+
+          // Create batch file with commands
+          const batchContent = `@echo off
+cd /d "${cwd}"
+${command}
+exit /b %errorlevel%`;
+
+          // Create VBS script that elevates the batch file
+          const vbsContent = `Set UAC = CreateObject("Shell.Application")
+UAC.ShellExecute "${batchPath}", "", "", "runas", 1
+WScript.Sleep 10000 ' Wait for command to complete`;
+
+          fs.writeFileSync(batchPath, batchContent);
+          fs.writeFileSync(vbsPath, vbsContent);
+
+          // Execute the VBS script which will elevate the batch file
+          result = await execPromise(`cscript //nologo "${vbsPath}"`);
+
+          // Clean up temporary files
+          try {
+            fs.unlinkSync(vbsPath);
+            fs.unlinkSync(batchPath);
+          } catch (cleanupError) {
+            console.warn(
+              `Failed to remove temporary files: ${cleanupError.message}`
+            );
+          }
+        } catch (vbsError) {
+          console.error(
+            `Failed second elevation attempt on Windows: ${vbsError.message}`
+          );
+
+          // Fallback - attempt to run without elevation
+          console.log(`Trying command without elevation as fallback`);
+          result = await execPromise(command, { cwd });
+        }
+      }
+    } else {
+      // Other platforms - run without elevation
+      result = await execPromise(command, { cwd });
+    }
+
+    console.log(`Command succeeded: ${command}`);
+    return {
+      success: true,
+      stdout: result?.stdout || "",
+      stderr: result?.stderr || "",
+    };
   } catch (error) {
     console.error(`Command failed: ${command}`, error);
+
+    // Determine if the failure is permission-related
+    const isPermissionError =
+      error.message.includes("Access is denied") ||
+      error.message.includes("permission denied") ||
+      error.message.includes("EPERM") ||
+      error.message.includes("EACCES") ||
+      error.message.includes("elevated privileges required");
+
+    const errorMessage = isPermissionError
+      ? `Permission error: This command requires elevated privileges. Please ensure the CI/CD service has appropriate permissions.`
+      : error.message;
 
     // Send notification for failed command with detailed information
     await sendMessageInSlack(webhookUrl, {
@@ -229,12 +336,20 @@ const executeCommand = async (
             },
             {
               title: "Error Message",
-              value: error.message,
+              value: errorMessage,
             },
             {
               title: "Directory",
               value: cwd,
             },
+            ...(isPermissionError
+              ? [
+                  {
+                    title: "Recommendation",
+                    value: `Run the CI/CD service with administrator privileges or modify the command to use appropriate elevation.`,
+                  },
+                ]
+              : []),
           ],
           footer: "Wooffer CI/CD",
           ts: Math.floor(Date.now() / 1000),

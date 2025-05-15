@@ -36,6 +36,8 @@ cd wooffer-ci-cd
 
 # Edit the config.json file to replace example values with your actual configuration
 nano config.json  # or use any text editor
+# or
+notepad config.json  # for window
 ```
 
 ## Important: Default Configuration
@@ -50,6 +52,7 @@ The installation provides a default configuration in `config.json`, located in t
     "environments": {
       "main": {
         "deployPath": "/path/to/your/project/from/root",
+        "detailedLog": true, // This is an optional field. The default value is false.
         "slackWebhookUrl": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
         "commands": [
           "git restore .",
@@ -77,16 +80,17 @@ The service will not work properly until this configuration is updated with your
 
 ## Configuration Properties Table
 
-| Property                  | Description                                                                       | Example                                           | Notes                                                                                                                                                     |
-| ------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **GitHub Repository URL** | The URL of your GitHub repository                                                 | `https://github.com/TST-Technology/wooffer-CI-CD` | If the URL ends with .git, remove the .git suffix                                                                                                         |
-| **name**                  | Display name for the project                                                      | `"wooffer-ci-cd"`                                 | Used in logs and Slack notifications. This serves as a unique identifier for your project, so we recommend following the {projectname} in naming pattern. |
-| **secret**                | The secret key is a randomly generated value used for validating GitHub webhooks. | `"a5b7c9d1e3f5"`                                  | This key must exactly match the secret configured in the GitHub webhook settings.                                                                         |
-| **environments**          | Object containing deployment configs for different branches                       | See below                                         | Branch names are used as keys                                                                                                                             |
-| **Branch name**           | Git branch on which you want to set the triggers.                                 | `"main"`, `"staging"`                             | It is case-sensitive, so it must exactly match the actual branch name.                                                                                    |
-| **deployPath**            | Absolute path to the project folder on your server                                | `"/var/www/myapp"`                                | Must have proper permissions for all commands                                                                                                             |
-| **slackWebhookUrl**       | URL for sending notifications to Slack                                            | `"https://hooks.slack.com/services/XXX/YYY/ZZZ"`  | Create a Slack Incoming Webhook by following the steps shown in this video: https://www.youtube.com/watch?v=sxtC40gUS2A Webhooks                          |
-| **commands**              | Array of shell commands to execute sequentially                                   | `["git pull", "npm install", "npm run build"]`    | Commands will run under the provided folder path.                                                                                                         |
+| Property                  | Description                                                                       | Example                                           | Notes                                                                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **GitHub Repository URL** | The URL of your GitHub repository                                                 | `https://github.com/TST-Technology/wooffer-CI-CD` | If the URL ends with .git, remove the .git suffix                                                                                                              |
+| **name**                  | Display name for the project                                                      | `"wooffer-ci-cd"`                                 | Used in logs and Slack notifications. This serves as a unique identifier for your project, so we recommend following the {projectname} in naming pattern.      |
+| **secret**                | The secret key is a randomly generated value used for validating GitHub webhooks. | `"a5b7c9d1e3f5"`                                  | This key must exactly match the secret configured in the GitHub webhook settings.                                                                              |
+| **environments**          | Object containing deployment configs for different branches                       | See below                                         | Branch names are used as keys                                                                                                                                  |
+| **Branch name**           | Git branch on which you want to set the triggers.                                 | `"main"`, `"staging"`                             | It is case-sensitive, so it must exactly match the actual branch name.                                                                                         |
+| **deployPath**            | Absolute path to the project folder on your server                                | `"/var/www/myapp"`                                | Must have proper permissions for all commands                                                                                                                  |
+| **slackWebhookUrl**       | URL for sending notifications to Slack                                            | `"https://hooks.slack.com/services/XXX/YYY/ZZZ"`  | Create a Slack Incoming Webhook by following the steps shown in this video: https://www.youtube.com/watch?v=sxtC40gUS2A Webhooks                               |
+| **commands**              | Array of shell commands to execute sequentially                                   | `["git pull", "npm install", "npm run build"]`    | Commands will run under the provided folder path.                                                                                                              |
+| **detailedLog**           | This is an optional field. The default value is false.                            | `true` or `false`                                 | If true, it provides all detailed logs received from command execution. If false, it only shows the status of the command execution. Keep it off until needed. |
 
 ### 🔧 Configuration Example
 
@@ -137,7 +141,9 @@ By default, the application will start on port 3000. If you want to change the p
 
 ```bash
 # create .env file
-nano .env
+nano .env #for linux
+#or
+notepad .env #for window
 
 # Add PORT variable
 PORT=4968 #You can replace <your-desired-port> with any port number that is not already in use by another process.

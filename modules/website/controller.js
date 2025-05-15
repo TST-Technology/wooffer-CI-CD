@@ -13,6 +13,11 @@ const execPromise = util.promisify(exec);
 const configPath = path.join(__dirname, "../../config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
+// Default logging settings
+const defaultLogSettings = {
+  detailedLog: false, // By default, detailed logging is disabled
+};
+
 // In-memory job queue
 const jobQueue = [];
 let isProcessing = false;
@@ -28,7 +33,27 @@ function logError(prefix, message) {
   console.error(`[${timestamp}] [ERROR] [${prefix}] ${message}`);
 }
 
-function logCommand(project, branch, command, output, isError = false) {
+function logCommand(
+  project,
+  branch,
+  command,
+  output,
+  isError = false,
+  enableDetailedLog = false
+) {
+  // Skip detailed command logging if not enabled
+  if (!enableDetailedLog && !isError) {
+    // Always log a summary even when detailed logging is disabled
+    const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+    const logMethod = console.log;
+    logMethod(
+      `[${timestamp}] [SUMMARY] [${project}/${branch}] Command: ${command} - Completed ${
+        isError ? "with errors" : "successfully"
+      }`
+    );
+    return;
+  }
+
   const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
   const logPrefix = `${project}/${branch}`;
   const logMethod = isError ? console.error : console.log;
@@ -42,6 +67,26 @@ function logCommand(project, branch, command, output, isError = false) {
   logMethod(`${"-".repeat(80)}`);
   logMethod(output);
   logMethod(`${"=".repeat(80)}\n`);
+}
+
+// Function to get logging configuration for a project/environment
+function getLogSettings(project, branchName) {
+  // Check if project has logging settings
+  if (!project || !project.environments || !project.environments[branchName]) {
+    return defaultLogSettings;
+  }
+
+  const environment = project.environments[branchName];
+
+  // Check if environment has logging settings
+  if (!environment.logSettings) {
+    return defaultLogSettings;
+  }
+
+  return {
+    ...defaultLogSettings,
+    ...environment.logSettings,
+  };
 }
 
 // Helper function to find project by URL
@@ -266,17 +311,6 @@ const sendMessageInSlack = async (webhookUrl, payload) => {
 };
 
 // Execute a single command in the specified directory
-// Retry logic to wait for log file to appear
-const waitForLogFile = async (logPath, retries = 10, delay = 300) => {
-  for (let i = 0; i < retries; i++) {
-    if (fs.existsSync(logPath)) {
-      return fs.readFileSync(logPath, "utf8");
-    }
-    await new Promise((r) => setTimeout(r, delay));
-  }
-  throw new Error(`Log file not found after waiting: ${logPath}`);
-};
-
 const executeCommand = async (
   command,
   cwd,
@@ -284,6 +318,18 @@ const executeCommand = async (
   projectName,
   branchName
 ) => {
+  // Get logging settings
+  const project = findProjectByName(projectName)?.project;
+  const logSettings = getLogSettings(project, branchName);
+  const enableDetailedLog = logSettings.detailedLog === true;
+
+  if (enableDetailedLog) {
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Detailed logging is enabled for this environment`
+    );
+  }
+
   try {
     const windir = process.env.windir || "C:\\Windows";
     if (command.includes("%windir%")) {
@@ -291,7 +337,10 @@ const executeCommand = async (
     }
 
     logInfo(`${projectName}/${branchName}`, `Executing command: ${command}`);
-    logInfo(`${projectName}/${branchName}`, `Executing command: ${command} in ${cwd}`);
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Executing command: ${command} in ${cwd}`
+    );
 
     const platform = os.platform();
     let result;
@@ -300,8 +349,14 @@ const executeCommand = async (
     if (platform === "win32") {
       try {
         const timestamp = Date.now();
-        const tempBatchPath = path.join(os.tmpdir(), `wooffer_elevated_${timestamp}.bat`);
-        const logPath = path.join(os.tmpdir(), `wooffer_output_${timestamp}.log`);
+        const tempBatchPath = path.join(
+          os.tmpdir(),
+          `wooffer_elevated_${timestamp}.bat`
+        );
+        const logPath = path.join(
+          os.tmpdir(),
+          `wooffer_output_${timestamp}.log`
+        );
 
         const batchContent = `@echo off
 cd /d "${cwd}"
@@ -309,34 +364,69 @@ ${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
         fs.writeFileSync(tempBatchPath, batchContent);
-        logInfo(`${projectName}/${branchName}`, `Created temporary batch file at ${tempBatchPath}`);
+        logInfo(
+          `${projectName}/${branchName}`,
+          `Created temporary batch file at ${tempBatchPath}`
+        );
 
         // Use System32\cmd.exe instead of Sysnative (since you're on 64-bit Node.js)
         const cmd = `${windir}\\System32\\cmd.exe`;
-        await execPromise(`powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs`);
+        await execPromise(
+          `powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs`
+        );
 
         try {
           commandOutput = await waitForLogFile(logPath);
-          logCommand(projectName, branchName, command, commandOutput);
+          logCommand(
+            projectName,
+            branchName,
+            command,
+            commandOutput,
+            false,
+            enableDetailedLog
+          );
         } catch (readErr) {
-          logError(projectName, branchName, `Failed to read log file: ${readErr.message}`);
+          logError(
+            projectName,
+            branchName,
+            `Failed to read log file: ${readErr.message}`
+          );
         }
 
         try {
           fs.unlinkSync(tempBatchPath);
           fs.unlinkSync(logPath);
-          logInfo(`${projectName}/${branchName}`, `Removed temporary batch and log files`);
+          logInfo(
+            `${projectName}/${branchName}`,
+            `Removed temporary batch and log files`
+          );
         } catch (cleanupError) {
-          logError(projectName, branchName, `Failed to remove temporary files: ${cleanupError.message}`);
+          logError(
+            projectName,
+            branchName,
+            `Failed to remove temporary files: ${cleanupError.message}`
+          );
         }
       } catch (elevationError) {
-        logError(`${projectName}/${branchName}`, `Failed to elevate command on Windows: ${elevationError.message}`);
+        logError(
+          `${projectName}/${branchName}`,
+          `Failed to elevate command on Windows: ${elevationError.message}`
+        );
 
         try {
           const timestamp = Date.now();
-          const vbsPath = path.join(os.tmpdir(), `wooffer_elevated_${timestamp}.vbs`);
-          const batchPath = path.join(os.tmpdir(), `wooffer_command_${timestamp}.bat`);
-          const logPath = path.join(os.tmpdir(), `wooffer_output_${timestamp}.log`);
+          const vbsPath = path.join(
+            os.tmpdir(),
+            `wooffer_elevated_${timestamp}.vbs`
+          );
+          const batchPath = path.join(
+            os.tmpdir(),
+            `wooffer_command_${timestamp}.bat`
+          );
+          const logPath = path.join(
+            os.tmpdir(),
+            `wooffer_output_${timestamp}.log`
+          );
 
           const batchContent = `@echo off
 cd /d "${cwd}"
@@ -350,44 +440,111 @@ WScript.Sleep 10000`;
           fs.writeFileSync(batchPath, batchContent);
           fs.writeFileSync(vbsPath, vbsContent);
 
-          logInfo(`${projectName}/${branchName}`, `Second elevation attempt: Created files at ${vbsPath} and ${batchPath}`);
+          logInfo(
+            `${projectName}/${branchName}`,
+            `Second elevation attempt: Created files at ${vbsPath} and ${batchPath}`
+          );
 
           await execPromise(`cscript //nologo "${vbsPath}"`);
 
           try {
             commandOutput = await waitForLogFile(logPath);
-            logCommand(projectName, branchName, command, commandOutput);
+            logCommand(
+              projectName,
+              branchName,
+              command,
+              commandOutput,
+              false,
+              enableDetailedLog
+            );
           } catch (readErr) {
-            logError(projectName, branchName, `Failed to read log file: ${readErr.message}`);
+            logError(
+              projectName,
+              branchName,
+              `Failed to read log file: ${readErr.message}`
+            );
           }
 
           try {
             fs.unlinkSync(vbsPath);
             fs.unlinkSync(batchPath);
             fs.unlinkSync(logPath);
-            logInfo(`${projectName}/${branchName}`, `Removed temporary VBS, batch and log files`);
+            logInfo(
+              `${projectName}/${branchName}`,
+              `Removed temporary VBS, batch and log files`
+            );
           } catch (cleanupError) {
-            logError(projectName, branchName, `Failed to remove temporary files: ${cleanupError.message}`);
+            logError(
+              projectName,
+              branchName,
+              `Failed to remove temporary files: ${cleanupError.message}`
+            );
           }
         } catch (vbsError) {
-          logError(`${projectName}/${branchName}`, `Failed second elevation attempt on Windows: ${vbsError.message}`);
+          logError(
+            `${projectName}/${branchName}`,
+            `Failed second elevation attempt on Windows: ${vbsError.message}`
+          );
 
-          logInfo(`${projectName}/${branchName}`, `Trying command without elevation as fallback`);
+          logInfo(
+            `${projectName}/${branchName}`,
+            `Trying command without elevation as fallback`
+          );
           result = await execPromise(command, { cwd });
 
-          if (result.stdout) logCommand(projectName, branchName, command, result.stdout);
-          if (result.stderr) logCommand(projectName, branchName, command, result.stderr, true);
+          if (result.stdout)
+            logCommand(
+              projectName,
+              branchName,
+              command,
+              result.stdout,
+              false,
+              enableDetailedLog
+            );
+          if (result.stderr)
+            logCommand(
+              projectName,
+              branchName,
+              command,
+              result.stderr,
+              true,
+              enableDetailedLog
+            );
         }
       }
     } else {
       result = await execPromise(command, { cwd });
 
-      if (result.stdout) logCommand(projectName, branchName, command, result.stdout);
-      if (result.stderr) logCommand(projectName, branchName, command, result.stderr, result.stderr.length > 0);
+      if (result.stdout)
+        logCommand(
+          projectName,
+          branchName,
+          command,
+          result.stdout,
+          false,
+          enableDetailedLog
+        );
+      if (result.stderr)
+        logCommand(
+          projectName,
+          branchName,
+          command,
+          result.stderr,
+          result.stderr.length > 0,
+          enableDetailedLog
+        );
     }
 
-    logInfo(`${projectName}/${branchName}`, `Command completed successfully: ${command}`);
-    logInfo(`${projectName}/${branchName}`, `Command output:\n${commandOutput || result?.stdout || "[No Output]"}`);
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Command completed successfully: ${command}`
+    );
+    if (enableDetailedLog) {
+      logInfo(
+        `${projectName}/${branchName}`,
+        `Command output:\n${commandOutput || result?.stdout || "[No Output]"}`
+      );
+    }
 
     return {
       success: true,
@@ -395,7 +552,10 @@ WScript.Sleep 10000`;
       stderr: result?.stderr || "",
     };
   } catch (error) {
-    logError(`${projectName}/${branchName}`, `Command failed: ${command}\nError: ${error.message}`);
+    logError(
+      `${projectName}/${branchName}`,
+      `Command failed: ${command}\nError: ${error.message}`
+    );
 
     const isPermissionError =
       error.message.includes("Access is denied") ||
@@ -436,13 +596,15 @@ WScript.Sleep 10000`;
         ],
       });
     } catch (notificationError) {
-      logError(`${projectName}/${branchName}`, `Failed to send error notification: ${notificationError.message}`);
+      logError(
+        `${projectName}/${branchName}`,
+        `Failed to send error notification: ${notificationError.message}`
+      );
     }
 
     throw error;
   }
 };
-
 
 // Execute all commands for a deployment
 const executeDeployment = async (project, branchName, environment, job) => {
@@ -451,10 +613,25 @@ const executeDeployment = async (project, branchName, environment, job) => {
   const triggeredBy = job.triggeredBy || "Unknown";
   const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
 
+  // Check logging settings
+  const logSettings = getLogSettings(project, branchName);
+  const detailedLog = logSettings.detailedLog === true;
+
   logInfo(
     `${name}/${branchName}`,
     `Starting deployment for ${name} (${branchName})`
   );
+  if (detailedLog) {
+    logInfo(
+      `${name}/${branchName}`,
+      `Detailed logging is enabled for this deployment`
+    );
+  } else {
+    logInfo(
+      `${name}/${branchName}`,
+      `Detailed logging is disabled. To enable, set detailedLog: true in config.json for this environment`
+    );
+  }
 
   // Send deployment started notification with comprehensive information
   // Wrap in try/catch to prevent notification errors from stopping deployment
@@ -484,6 +661,11 @@ const executeDeployment = async (project, branchName, environment, job) => {
             {
               title: "Time Started",
               value: timestamp,
+              short: true,
+            },
+            {
+              title: "Detailed Logging",
+              value: detailedLog ? "Enabled" : "Disabled",
               short: true,
             },
           ],
@@ -558,6 +740,11 @@ const executeDeployment = async (project, branchName, environment, job) => {
                     moment(timestamp, "YYYY-MM-DD HH:mm:ss"),
                     "minutes"
                   ) + " minutes",
+                short: true,
+              },
+              {
+                title: "Detailed Logging",
+                value: detailedLog ? "Enabled" : "Disabled",
                 short: true,
               },
             ],

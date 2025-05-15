@@ -17,6 +17,33 @@ const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const jobQueue = [];
 let isProcessing = false;
 
+// Function for standardized console logging
+function logInfo(prefix, message) {
+  const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+  console.log(`[${timestamp}] [INFO] [${prefix}] ${message}`);
+}
+
+function logError(prefix, message) {
+  const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+  console.error(`[${timestamp}] [ERROR] [${prefix}] ${message}`);
+}
+
+function logCommand(project, branch, command, output, isError = false) {
+  const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+  const logPrefix = `${project}/${branch}`;
+  const logMethod = isError ? console.error : console.log;
+
+  logMethod(`\n${"=".repeat(80)}`);
+  logMethod(
+    `[${timestamp}] [${
+      isError ? "ERROR" : "OUTPUT"
+    }] [${logPrefix}] Command: ${command}`
+  );
+  logMethod(`${"-".repeat(80)}`);
+  logMethod(output);
+  logMethod(`${"=".repeat(80)}\n`);
+}
+
 // Helper function to find project by URL
 function findProjectByUrl(repoUrl) {
   // Normalize URL by removing any trailing .git
@@ -48,7 +75,7 @@ function getAvailableBranches(project) {
 
 // Add job to queue
 function addJobToQueue(job) {
-  console.log(`Adding job to queue: ${job.repoUrl} (${job.branchName})`);
+  logInfo("Queue", `Adding job to queue: ${job.repoUrl} (${job.branchName})`);
 
   // Add timestamp and trigger info
   job.timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
@@ -56,18 +83,21 @@ function addJobToQueue(job) {
   // Find project and environment configuration for Slack notification
   const project = findProjectByUrl(job.repoUrl);
   if (!project) {
-    console.error(`Project not found for repository: ${job.repoUrl}`);
+    logError("Queue", `Project not found for repository: ${job.repoUrl}`);
     return { position: -1 };
   }
 
   const environment = findEnvironmentForBranch(project, job.branchName);
   if (!environment) {
-    console.error(`Environment not found for branch: ${job.branchName}`);
+    logError("Queue", `Environment not found for branch: ${job.branchName}`);
     return { position: -1 };
   }
 
   jobQueue.push(job);
   const queuePosition = jobQueue.length;
+
+  logInfo("Queue", `Job added at position ${queuePosition}`);
+
   // If there's already a job running or other jobs in the queue, send a queued notification
   if (isProcessing || queuePosition > 1) {
     sendQueuedNotification(
@@ -100,6 +130,11 @@ async function sendQueuedNotification(
   const triggeredBy = job.triggeredBy || "Unknown";
   const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
   const jobsAhead = position - 1;
+
+  logInfo(
+    "Notification",
+    `Sending queued notification for ${name}/${branchName}`
+  );
 
   // Send queued notification with queue position
   await sendMessageInSlack(slackWebhookUrl, {
@@ -152,6 +187,7 @@ async function sendQueuedNotification(
 async function processNextJob() {
   if (jobQueue.length === 0) {
     isProcessing = false;
+    logInfo("Queue", "No more jobs in queue. Processing complete.");
     return;
   }
 
@@ -159,21 +195,28 @@ async function processNextJob() {
   const job = jobQueue.shift();
 
   try {
-    console.log(
-      `Processing job for ${job.repoUrl} with branch ${job.branchName}`
+    logInfo(
+      "Processing",
+      `Starting job for ${job.repoUrl} (${job.branchName})`
     );
 
     // Find project and environment configuration
     const project = findProjectByUrl(job.repoUrl);
     if (!project) {
-      console.error(`Project not found for repository: ${job.repoUrl}`);
+      logError(
+        "Processing",
+        `Project not found for repository: ${job.repoUrl}`
+      );
       processNextJob();
       return;
     }
 
     const environment = findEnvironmentForBranch(project, job.branchName);
     if (!environment) {
-      console.error(`Environment not found for branch: ${job.branchName}`);
+      logError(
+        "Processing",
+        `Environment not found for branch: ${job.branchName}`
+      );
       processNextJob();
       return;
     }
@@ -184,7 +227,7 @@ async function processNextJob() {
     // Process next job automatically
     processNextJob();
   } catch (error) {
-    console.error(`Error processing job:`, error);
+    logError("Processing", `Error processing job: ${error.message}`);
     // Process next job even if there's an error
     processNextJob();
   }
@@ -197,21 +240,28 @@ const sendMessageInSlack = async (webhookUrl, payload) => {
     typeof webhookUrl !== "string" ||
     !webhookUrl.startsWith("http")
   ) {
-    console.log("Skipping Slack notification: Invalid or missing webhook URL");
+    logInfo(
+      "Slack",
+      "Skipping Slack notification: Invalid or missing webhook URL"
+    );
     return;
   }
 
   try {
     await axios.post(webhookUrl, payload, {
-      timeout: 120000, // 5 second timeout to prevent long waits
+      timeout: 120000, // 120 second timeout to prevent long waits
       headers: {
         "Content-Type": "application/json",
       },
     });
+    logInfo("Slack", "Notification sent successfully");
   } catch (error) {
     // Log the error but don't throw it - allow the pipeline to continue
-    console.error("Error sending Slack message:", error.message);
-    console.log("Continuing deployment despite Slack notification failure");
+    logError("Slack", `Error sending Slack message: ${error.message}`);
+    logInfo(
+      "Slack",
+      "Continuing deployment despite Slack notification failure"
+    );
   }
 };
 
@@ -221,11 +271,14 @@ const executeCommand = async (
   cwd,
   webhookUrl,
   projectName,
-  deploymentInfo
+  branchName
 ) => {
   try {
     // Execute command with elevated privileges based on platform
-    console.log(`Executing command: ${command} in ${cwd}`);
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Executing command: ${command} in ${cwd}`
+    );
 
     const platform = os.platform();
     let result;
@@ -248,21 +301,40 @@ exit /b %errorlevel%`;
         // Write the batch file
         fs.writeFileSync(tempBatchPath, batchContent);
 
+        logInfo(
+          `${projectName}/${branchName}`,
+          `Created temporary batch file at ${tempBatchPath}`
+        );
+
         // Run the batch file with runas command for elevation
         result = await execPromise(
           `runas /trustlevel:0x20000 "cmd.exe /c ${tempBatchPath}"`
         );
 
+        // Log the complete output to console
+        if (result.stdout) {
+          logCommand(projectName, branchName, command, result.stdout);
+        }
+        if (result.stderr) {
+          logCommand(projectName, branchName, command, result.stderr, true);
+        }
+
         // Clean up the temporary batch file
         try {
           fs.unlinkSync(tempBatchPath);
+          logInfo(
+            `${projectName}/${branchName}`,
+            `Removed temporary batch file`
+          );
         } catch (cleanupError) {
-          console.warn(
+          logError(
+            `${projectName}/${branchName}`,
             `Failed to remove temporary batch file: ${cleanupError.message}`
           );
         }
       } catch (elevationError) {
-        console.error(
+        logError(
+          `${projectName}/${branchName}`,
           `Failed to elevate command on Windows: ${elevationError.message}`
         );
 
@@ -291,41 +363,91 @@ WScript.Sleep 10000 ' Wait for command to complete`;
           fs.writeFileSync(batchPath, batchContent);
           fs.writeFileSync(vbsPath, vbsContent);
 
+          logInfo(
+            `${projectName}/${branchName}`,
+            `Second elevation attempt: Created temporary files at ${vbsPath} and ${batchPath}`
+          );
+
           // Execute the VBS script which will elevate the batch file
           result = await execPromise(`cscript //nologo "${vbsPath}"`);
+
+          // Log the complete output to console
+          if (result.stdout) {
+            logCommand(projectName, branchName, command, result.stdout);
+          }
+          if (result.stderr) {
+            logCommand(projectName, branchName, command, result.stderr, true);
+          }
 
           // Clean up temporary files
           try {
             fs.unlinkSync(vbsPath);
             fs.unlinkSync(batchPath);
+            logInfo(
+              `${projectName}/${branchName}`,
+              `Removed temporary VBS and batch files`
+            );
           } catch (cleanupError) {
-            console.warn(
+            logError(
+              `${projectName}/${branchName}`,
               `Failed to remove temporary files: ${cleanupError.message}`
             );
           }
         } catch (vbsError) {
-          console.error(
+          logError(
+            `${projectName}/${branchName}`,
             `Failed second elevation attempt on Windows: ${vbsError.message}`
           );
 
           // Fallback - attempt to run without elevation
-          console.log(`Trying command without elevation as fallback`);
+          logInfo(
+            `${projectName}/${branchName}`,
+            `Trying command without elevation as fallback`
+          );
           result = await execPromise(command, { cwd });
+
+          // Log the complete output to console
+          if (result.stdout) {
+            logCommand(projectName, branchName, command, result.stdout);
+          }
+          if (result.stderr) {
+            logCommand(projectName, branchName, command, result.stderr, true);
+          }
         }
       }
     } else {
       // Other platforms - run without elevation
       result = await execPromise(command, { cwd });
+
+      // Log the complete output to console
+      if (result.stdout) {
+        logCommand(projectName, branchName, command, result.stdout);
+      }
+      if (result.stderr) {
+        logCommand(
+          projectName,
+          branchName,
+          command,
+          result.stderr,
+          result.stderr.length > 0
+        );
+      }
     }
 
-    console.log(`Command succeeded: ${command}`);
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Command completed successfully: ${command}`
+    );
     return {
       success: true,
       stdout: result?.stdout || "",
       stderr: result?.stderr || "",
     };
   } catch (error) {
-    console.error(`Command failed: ${command}`, error);
+    logError(
+      `${projectName}/${branchName}`,
+      `Command failed: ${command}\nError: ${error.message}`
+    );
 
     // Determine if the failure is permission-related
     const isPermissionError =
@@ -338,6 +460,8 @@ WScript.Sleep 10000 ' Wait for command to complete`;
     const errorMessage = isPermissionError
       ? `Permission error: This command requires elevated privileges. Please ensure the CI/CD service has appropriate permissions.`
       : error.message;
+
+    logError(`${projectName}/${branchName}`, `Error details: ${errorMessage}`);
 
     // Send notification for failed command with detailed information - wrapped in try/catch
     try {
@@ -375,9 +499,9 @@ WScript.Sleep 10000 ' Wait for command to complete`;
         ],
       });
     } catch (notificationError) {
-      console.error(
-        "Failed to send error notification:",
-        notificationError.message
+      logError(
+        `${projectName}/${branchName}`,
+        `Failed to send error notification: ${notificationError.message}`
       );
     }
 
@@ -391,6 +515,11 @@ const executeDeployment = async (project, branchName, environment, job) => {
   const { deployPath, commands, slackWebhookUrl } = environment;
   const triggeredBy = job.triggeredBy || "Unknown";
   const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
+
+  logInfo(
+    `${name}/${branchName}`,
+    `Starting deployment for ${name} (${branchName})`
+  );
 
   // Send deployment started notification with comprehensive information
   // Wrap in try/catch to prevent notification errors from stopping deployment
@@ -428,19 +557,35 @@ const executeDeployment = async (project, branchName, environment, job) => {
         },
       ],
     });
-  } catch (notificationError) {
-    console.error(
-      "Failed to send start notification:",
-      notificationError.message
+    logInfo(
+      `${name}/${branchName}`,
+      "Sent deployment started notification to Slack"
     );
-    console.log("Continuing deployment despite notification failure");
+  } catch (notificationError) {
+    logError(
+      `${name}/${branchName}`,
+      `Failed to send start notification: ${notificationError.message}`
+    );
+    logInfo(
+      `${name}/${branchName}`,
+      "Continuing deployment despite notification failure"
+    );
   }
 
   try {
     // Execute commands sequentially without individual notifications
     for (const command of commands) {
-      await executeCommand(command, deployPath, slackWebhookUrl, name);
+      logInfo(`${name}/${branchName}`, `Executing command: ${command}`);
+      await executeCommand(
+        command,
+        deployPath,
+        slackWebhookUrl,
+        name,
+        branchName
+      );
     }
+
+    logInfo(`${name}/${branchName}`, `Deployment completed successfully`);
 
     // Only send notification upon successful completion of all commands
     try {
@@ -486,16 +631,28 @@ const executeDeployment = async (project, branchName, environment, job) => {
           },
         ],
       });
-    } catch (notificationError) {
-      console.error(
-        "Failed to send completion notification:",
-        notificationError.message
+      logInfo(
+        `${name}/${branchName}`,
+        "Sent deployment completed notification to Slack"
       );
-      console.log("Deployment was successful despite notification failure");
+    } catch (notificationError) {
+      logError(
+        `${name}/${branchName}`,
+        `Failed to send completion notification: ${notificationError.message}`
+      );
+      logInfo(
+        `${name}/${branchName}`,
+        "Deployment was successful despite notification failure"
+      );
     }
 
     return { success: true };
   } catch (error) {
+    logError(
+      `${name}/${branchName}`,
+      `Deployment failed with error: ${error.message}`
+    );
+
     // No additional failure notification - the individual command failure is enough
     console.error(`Deployment failed: ${error.message}`);
     return { success: false, error: error.message };

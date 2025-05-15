@@ -336,7 +336,6 @@ const executeCommand = async (
       command = command.replace(/%windir%/gi, windir);
     }
 
-    logInfo(`${projectName}/${branchName}`, `Executing command: ${command}`);
     logInfo(
       `${projectName}/${branchName}`,
       `Executing command: ${command} in ${cwd}`
@@ -364,10 +363,6 @@ ${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
         fs.writeFileSync(tempBatchPath, batchContent);
-        logInfo(
-          `${projectName}/${branchName}`,
-          `Created temporary batch file at ${tempBatchPath}`
-        );
 
         // Use System32\cmd.exe instead of Sysnative (since you're on 64-bit Node.js)
         const cmd = `${windir}\\System32\\cmd.exe`;
@@ -396,10 +391,6 @@ exit /b %errorlevel%`;
         try {
           fs.unlinkSync(tempBatchPath);
           fs.unlinkSync(logPath);
-          logInfo(
-            `${projectName}/${branchName}`,
-            `Removed temporary batch and log files`
-          );
         } catch (cleanupError) {
           logError(
             projectName,
@@ -440,11 +431,6 @@ WScript.Sleep 10000`;
           fs.writeFileSync(batchPath, batchContent);
           fs.writeFileSync(vbsPath, vbsContent);
 
-          logInfo(
-            `${projectName}/${branchName}`,
-            `Second elevation attempt: Created files at ${vbsPath} and ${batchPath}`
-          );
-
           await execPromise(`cscript //nologo "${vbsPath}"`);
 
           try {
@@ -469,10 +455,6 @@ WScript.Sleep 10000`;
             fs.unlinkSync(vbsPath);
             fs.unlinkSync(batchPath);
             fs.unlinkSync(logPath);
-            logInfo(
-              `${projectName}/${branchName}`,
-              `Removed temporary VBS, batch and log files`
-            );
           } catch (cleanupError) {
             logError(
               projectName,
@@ -486,10 +468,6 @@ WScript.Sleep 10000`;
             `Failed second elevation attempt on Windows: ${vbsError.message}`
           );
 
-          logInfo(
-            `${projectName}/${branchName}`,
-            `Trying command without elevation as fallback`
-          );
           result = await execPromise(command, { cwd });
 
           if (result.stdout)

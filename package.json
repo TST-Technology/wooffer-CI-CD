@@ -1,6 +1,6 @@
 {
   "name": "wooffer-ci-cd",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A simple CI/CD service for automated deployments with GitHub webhooks and Slack notifications",
   "main": "app.js",
   "private": false,

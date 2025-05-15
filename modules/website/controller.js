@@ -670,7 +670,6 @@ const executeDeployment = async (project, branchName, environment, job) => {
   try {
     // Execute commands sequentially without individual notifications
     for (const command of commands) {
-      logInfo(`${name}/${branchName}`, `Executing command: ${command}`);
       await executeCommand(
         command,
         deployPath,

@@ -266,6 +266,17 @@ const sendMessageInSlack = async (webhookUrl, payload) => {
 };
 
 // Execute a single command in the specified directory
+// Retry logic to wait for log file to appear
+const waitForLogFile = async (logPath, retries = 10, delay = 300) => {
+  for (let i = 0; i < retries; i++) {
+    if (fs.existsSync(logPath)) {
+      return fs.readFileSync(logPath, "utf8");
+    }
+    await new Promise((r) => setTimeout(r, delay));
+  }
+  throw new Error(`Log file not found after waiting: ${logPath}`);
+};
+
 const executeCommand = async (
   command,
   cwd,
@@ -274,182 +285,118 @@ const executeCommand = async (
   branchName
 ) => {
   try {
-    // Execute command with elevated privileges based on platform
-    logInfo(
-      `${projectName}/${branchName}`,
-      `Executing command: ${command} in ${cwd}`
-    );
+    const windir = process.env.windir || "C:\\Windows";
+    if (command.includes("%windir%")) {
+      command = command.replace(/%windir%/gi, windir);
+    }
+
+    logInfo(`${projectName}/${branchName}`, `Executing command: ${command}`);
+    logInfo(`${projectName}/${branchName}`, `Executing command: ${command} in ${cwd}`);
 
     const platform = os.platform();
     let result;
+    let commandOutput = "";
 
     if (platform === "win32") {
-      // Windows - use cmd.exe with runas for elevation
       try {
-        // Create a temporary batch file to run the command with elevation
-        const tempBatchPath = path.join(
-          os.tmpdir(),
-          `wooffer_elevated_${Date.now()}.bat`
-        );
+        const timestamp = Date.now();
+        const tempBatchPath = path.join(os.tmpdir(), `wooffer_elevated_${timestamp}.bat`);
+        const logPath = path.join(os.tmpdir(), `wooffer_output_${timestamp}.log`);
 
-        // Create batch file content - includes working directory change and command execution
         const batchContent = `@echo off
 cd /d "${cwd}"
-${command}
+${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
-        // Write the batch file
         fs.writeFileSync(tempBatchPath, batchContent);
+        logInfo(`${projectName}/${branchName}`, `Created temporary batch file at ${tempBatchPath}`);
 
-        logInfo(
-          `${projectName}/${branchName}`,
-          `Created temporary batch file at ${tempBatchPath}`
-        );
+        // Use System32\cmd.exe instead of Sysnative (since you're on 64-bit Node.js)
+        const cmd = `${windir}\\System32\\cmd.exe`;
+        await execPromise(`powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs`);
 
-        // Run the batch file with runas command for elevation
-        result = await execPromise(
-          `runas /trustlevel:0x20000 "cmd.exe /c ${tempBatchPath}"`
-        );
-
-        // Log the complete output to console
-        if (result.stdout) {
-          logCommand(projectName, branchName, command, result.stdout);
-        }
-        if (result.stderr) {
-          logCommand(projectName, branchName, command, result.stderr, true);
+        try {
+          commandOutput = await waitForLogFile(logPath);
+          logCommand(projectName, branchName, command, commandOutput);
+        } catch (readErr) {
+          logError(projectName, branchName, `Failed to read log file: ${readErr.message}`);
         }
 
-        // Clean up the temporary batch file
         try {
           fs.unlinkSync(tempBatchPath);
-          logInfo(
-            `${projectName}/${branchName}`,
-            `Removed temporary batch file`
-          );
+          fs.unlinkSync(logPath);
+          logInfo(`${projectName}/${branchName}`, `Removed temporary batch and log files`);
         } catch (cleanupError) {
-          logError(
-            `${projectName}/${branchName}`,
-            `Failed to remove temporary batch file: ${cleanupError.message}`
-          );
+          logError(projectName, branchName, `Failed to remove temporary files: ${cleanupError.message}`);
         }
       } catch (elevationError) {
-        logError(
-          `${projectName}/${branchName}`,
-          `Failed to elevate command on Windows: ${elevationError.message}`
-        );
+        logError(`${projectName}/${branchName}`, `Failed to elevate command on Windows: ${elevationError.message}`);
 
-        // Second attempt with different elevation approach - using ShellExecute
         try {
-          const vbsPath = path.join(
-            os.tmpdir(),
-            `wooffer_elevated_${Date.now()}.vbs`
-          );
-          const batchPath = path.join(
-            os.tmpdir(),
-            `wooffer_command_${Date.now()}.bat`
-          );
+          const timestamp = Date.now();
+          const vbsPath = path.join(os.tmpdir(), `wooffer_elevated_${timestamp}.vbs`);
+          const batchPath = path.join(os.tmpdir(), `wooffer_command_${timestamp}.bat`);
+          const logPath = path.join(os.tmpdir(), `wooffer_output_${timestamp}.log`);
 
-          // Create batch file with commands
           const batchContent = `@echo off
 cd /d "${cwd}"
-${command}
+${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
-          // Create VBS script that elevates the batch file
           const vbsContent = `Set UAC = CreateObject("Shell.Application")
 UAC.ShellExecute "${batchPath}", "", "", "runas", 1
-WScript.Sleep 10000 ' Wait for command to complete`;
+WScript.Sleep 10000`;
 
           fs.writeFileSync(batchPath, batchContent);
           fs.writeFileSync(vbsPath, vbsContent);
 
-          logInfo(
-            `${projectName}/${branchName}`,
-            `Second elevation attempt: Created temporary files at ${vbsPath} and ${batchPath}`
-          );
+          logInfo(`${projectName}/${branchName}`, `Second elevation attempt: Created files at ${vbsPath} and ${batchPath}`);
 
-          // Execute the VBS script which will elevate the batch file
-          result = await execPromise(`cscript //nologo "${vbsPath}"`);
+          await execPromise(`cscript //nologo "${vbsPath}"`);
 
-          // Log the complete output to console
-          if (result.stdout) {
-            logCommand(projectName, branchName, command, result.stdout);
-          }
-          if (result.stderr) {
-            logCommand(projectName, branchName, command, result.stderr, true);
+          try {
+            commandOutput = await waitForLogFile(logPath);
+            logCommand(projectName, branchName, command, commandOutput);
+          } catch (readErr) {
+            logError(projectName, branchName, `Failed to read log file: ${readErr.message}`);
           }
 
-          // Clean up temporary files
           try {
             fs.unlinkSync(vbsPath);
             fs.unlinkSync(batchPath);
-            logInfo(
-              `${projectName}/${branchName}`,
-              `Removed temporary VBS and batch files`
-            );
+            fs.unlinkSync(logPath);
+            logInfo(`${projectName}/${branchName}`, `Removed temporary VBS, batch and log files`);
           } catch (cleanupError) {
-            logError(
-              `${projectName}/${branchName}`,
-              `Failed to remove temporary files: ${cleanupError.message}`
-            );
+            logError(projectName, branchName, `Failed to remove temporary files: ${cleanupError.message}`);
           }
         } catch (vbsError) {
-          logError(
-            `${projectName}/${branchName}`,
-            `Failed second elevation attempt on Windows: ${vbsError.message}`
-          );
+          logError(`${projectName}/${branchName}`, `Failed second elevation attempt on Windows: ${vbsError.message}`);
 
-          // Fallback - attempt to run without elevation
-          logInfo(
-            `${projectName}/${branchName}`,
-            `Trying command without elevation as fallback`
-          );
+          logInfo(`${projectName}/${branchName}`, `Trying command without elevation as fallback`);
           result = await execPromise(command, { cwd });
 
-          // Log the complete output to console
-          if (result.stdout) {
-            logCommand(projectName, branchName, command, result.stdout);
-          }
-          if (result.stderr) {
-            logCommand(projectName, branchName, command, result.stderr, true);
-          }
+          if (result.stdout) logCommand(projectName, branchName, command, result.stdout);
+          if (result.stderr) logCommand(projectName, branchName, command, result.stderr, true);
         }
       }
     } else {
-      // Other platforms - run without elevation
       result = await execPromise(command, { cwd });
 
-      // Log the complete output to console
-      if (result.stdout) {
-        logCommand(projectName, branchName, command, result.stdout);
-      }
-      if (result.stderr) {
-        logCommand(
-          projectName,
-          branchName,
-          command,
-          result.stderr,
-          result.stderr.length > 0
-        );
-      }
+      if (result.stdout) logCommand(projectName, branchName, command, result.stdout);
+      if (result.stderr) logCommand(projectName, branchName, command, result.stderr, result.stderr.length > 0);
     }
 
-    logInfo(
-      `${projectName}/${branchName}`,
-      `Command completed successfully: ${command}`
-    );
+    logInfo(`${projectName}/${branchName}`, `Command completed successfully: ${command}`);
+    logInfo(`${projectName}/${branchName}`, `Command output:\n${commandOutput || result?.stdout || "[No Output]"}`);
+
     return {
       success: true,
-      stdout: result?.stdout || "",
+      stdout: commandOutput || result?.stdout || "",
       stderr: result?.stderr || "",
     };
   } catch (error) {
-    logError(
-      `${projectName}/${branchName}`,
-      `Command failed: ${command}\nError: ${error.message}`
-    );
+    logError(`${projectName}/${branchName}`, `Command failed: ${command}\nError: ${error.message}`);
 
-    // Determine if the failure is permission-related
     const isPermissionError =
       error.message.includes("Access is denied") ||
       error.message.includes("permission denied") ||
@@ -463,27 +410,17 @@ WScript.Sleep 10000 ' Wait for command to complete`;
 
     logError(`${projectName}/${branchName}`, `Error details: ${errorMessage}`);
 
-    // Send notification for failed command with detailed information - wrapped in try/catch
     try {
       await sendMessageInSlack(webhookUrl, {
         attachments: [
           {
-            color: "#FF0000", // Red for failure
+            color: "#FF0000",
             title: `⚠️ Command Failed During Deployment`,
             text: `A command failed while deploying ${projectName}`,
             fields: [
-              {
-                title: "Failed Command",
-                value: command,
-              },
-              {
-                title: "Error Message",
-                value: errorMessage,
-              },
-              {
-                title: "Directory",
-                value: cwd,
-              },
+              { title: "Failed Command", value: command },
+              { title: "Error Message", value: errorMessage },
+              { title: "Directory", value: cwd },
               ...(isPermissionError
                 ? [
                     {
@@ -499,15 +436,13 @@ WScript.Sleep 10000 ' Wait for command to complete`;
         ],
       });
     } catch (notificationError) {
-      logError(
-        `${projectName}/${branchName}`,
-        `Failed to send error notification: ${notificationError.message}`
-      );
+      logError(`${projectName}/${branchName}`, `Failed to send error notification: ${notificationError.message}`);
     }
 
     throw error;
   }
 };
+
 
 // Execute all commands for a deployment
 const executeDeployment = async (project, branchName, environment, job) => {

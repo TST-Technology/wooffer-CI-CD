@@ -191,10 +191,27 @@ async function processNextJob() {
 }
 
 const sendMessageInSlack = async (webhookUrl, payload) => {
+  // Return early if webhook URL is not valid
+  if (
+    !webhookUrl ||
+    typeof webhookUrl !== "string" ||
+    !webhookUrl.startsWith("http")
+  ) {
+    console.log("Skipping Slack notification: Invalid or missing webhook URL");
+    return;
+  }
+
   try {
-    await axios.post(webhookUrl, payload);
+    await axios.post(webhookUrl, payload, {
+      timeout: 120000, // 5 second timeout to prevent long waits
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
   } catch (error) {
-    console.error("Error sending Slack message:", error);
+    // Log the error but don't throw it - allow the pipeline to continue
+    console.error("Error sending Slack message:", error.message);
+    console.log("Continuing deployment despite Slack notification failure");
   }
 };
 
@@ -322,40 +339,47 @@ WScript.Sleep 10000 ' Wait for command to complete`;
       ? `Permission error: This command requires elevated privileges. Please ensure the CI/CD service has appropriate permissions.`
       : error.message;
 
-    // Send notification for failed command with detailed information
-    await sendMessageInSlack(webhookUrl, {
-      attachments: [
-        {
-          color: "#FF0000", // Red for failure
-          title: `⚠️ Command Failed During Deployment`,
-          text: `A command failed while deploying ${projectName}`,
-          fields: [
-            {
-              title: "Failed Command",
-              value: command,
-            },
-            {
-              title: "Error Message",
-              value: errorMessage,
-            },
-            {
-              title: "Directory",
-              value: cwd,
-            },
-            ...(isPermissionError
-              ? [
-                  {
-                    title: "Recommendation",
-                    value: `Run the CI/CD service with administrator privileges or modify the command to use appropriate elevation.`,
-                  },
-                ]
-              : []),
-          ],
-          footer: "Wooffer CI/CD",
-          ts: Math.floor(Date.now() / 1000),
-        },
-      ],
-    });
+    // Send notification for failed command with detailed information - wrapped in try/catch
+    try {
+      await sendMessageInSlack(webhookUrl, {
+        attachments: [
+          {
+            color: "#FF0000", // Red for failure
+            title: `⚠️ Command Failed During Deployment`,
+            text: `A command failed while deploying ${projectName}`,
+            fields: [
+              {
+                title: "Failed Command",
+                value: command,
+              },
+              {
+                title: "Error Message",
+                value: errorMessage,
+              },
+              {
+                title: "Directory",
+                value: cwd,
+              },
+              ...(isPermissionError
+                ? [
+                    {
+                      title: "Recommendation",
+                      value: `Run the CI/CD service with administrator privileges or modify the command to use appropriate elevation.`,
+                    },
+                  ]
+                : []),
+            ],
+            footer: "Wooffer CI/CD",
+            ts: Math.floor(Date.now() / 1000),
+          },
+        ],
+      });
+    } catch (notificationError) {
+      console.error(
+        "Failed to send error notification:",
+        notificationError.message
+      );
+    }
 
     throw error;
   }
@@ -369,53 +393,14 @@ const executeDeployment = async (project, branchName, environment, job) => {
   const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
 
   // Send deployment started notification with comprehensive information
-  await sendMessageInSlack(slackWebhookUrl, {
-    attachments: [
-      {
-        color: "#FFA500", // Orange for in-progress
-        title: `🚀 Deployment Started: ${name}`,
-        text: `Starting deployment for ${name} (${branchName})`,
-        fields: [
-          {
-            title: "Project",
-            value: name,
-            short: true,
-          },
-          {
-            title: "Branch",
-            value: branchName,
-            short: true,
-          },
-          {
-            title: "Triggered By",
-            value: triggeredBy,
-            short: true,
-          },
-          {
-            title: "Time Started",
-            value: timestamp,
-            short: true,
-          },
-        ],
-        footer: "Wooffer CI/CD",
-        ts: Math.floor(Date.now() / 1000),
-      },
-    ],
-  });
-
+  // Wrap in try/catch to prevent notification errors from stopping deployment
   try {
-    // Execute commands sequentially without individual notifications
-    for (const command of commands) {
-      await executeCommand(command, deployPath, slackWebhookUrl, name);
-    }
-
-    // Only send notification upon successful completion of all commands
     await sendMessageInSlack(slackWebhookUrl, {
       attachments: [
         {
-          color: "#7CD197", // Green for success
-          title: `✅ Deployment Completed: ${name}`,
-          text: `Successfully deployed ${name} (${branchName})`,
+          color: "#FFA500", // Orange for in-progress
+          title: `🚀 Deployment Started: ${name}`,
+          text: `Starting deployment for ${name} (${branchName})`,
           fields: [
             {
               title: "Project",
@@ -433,17 +418,8 @@ const executeDeployment = async (project, branchName, environment, job) => {
               short: true,
             },
             {
-              title: "Time Completed",
-              value: moment().format("YYYY-MM-DD HH:mm:ss"),
-              short: true,
-            },
-            {
-              title: "Duration",
-              value:
-                moment().diff(
-                  moment(timestamp, "YYYY-MM-DD HH:mm:ss"),
-                  "minutes"
-                ) + " minutes",
+              title: "Time Started",
+              value: timestamp,
               short: true,
             },
           ],
@@ -452,6 +428,71 @@ const executeDeployment = async (project, branchName, environment, job) => {
         },
       ],
     });
+  } catch (notificationError) {
+    console.error(
+      "Failed to send start notification:",
+      notificationError.message
+    );
+    console.log("Continuing deployment despite notification failure");
+  }
+
+  try {
+    // Execute commands sequentially without individual notifications
+    for (const command of commands) {
+      await executeCommand(command, deployPath, slackWebhookUrl, name);
+    }
+
+    // Only send notification upon successful completion of all commands
+    try {
+      await sendMessageInSlack(slackWebhookUrl, {
+        attachments: [
+          {
+            color: "#7CD197", // Green for success
+            title: `✅ Deployment Completed: ${name}`,
+            text: `Successfully deployed ${name} (${branchName})`,
+            fields: [
+              {
+                title: "Project",
+                value: name,
+                short: true,
+              },
+              {
+                title: "Branch",
+                value: branchName,
+                short: true,
+              },
+              {
+                title: "Triggered By",
+                value: triggeredBy,
+                short: true,
+              },
+              {
+                title: "Time Completed",
+                value: moment().format("YYYY-MM-DD HH:mm:ss"),
+                short: true,
+              },
+              {
+                title: "Duration",
+                value:
+                  moment().diff(
+                    moment(timestamp, "YYYY-MM-DD HH:mm:ss"),
+                    "minutes"
+                  ) + " minutes",
+                short: true,
+              },
+            ],
+            footer: "Wooffer CI/CD",
+            ts: Math.floor(Date.now() / 1000),
+          },
+        ],
+      });
+    } catch (notificationError) {
+      console.error(
+        "Failed to send completion notification:",
+        notificationError.message
+      );
+      console.log("Deployment was successful despite notification failure");
+    }
 
     return { success: true };
   } catch (error) {

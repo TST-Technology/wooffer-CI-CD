@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const util = require("util");
 const moment = require("moment");
+const os = require("os");
 
 // Convert exec to promise
 const execPromise = util.promisify(exec);
@@ -12,9 +13,81 @@ const execPromise = util.promisify(exec);
 const configPath = path.join(__dirname, "../../config.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 
+// Default logging settings
+const defaultLogSettings = {
+  detailedLog: false, // By default, detailed logging is disabled
+};
+
 // In-memory job queue
 const jobQueue = [];
 let isProcessing = false;
+
+// Function for standardized console logging
+function logInfo(prefix, message) {
+  const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+  console.log(`[${timestamp}] [INFO] [${prefix}] ${message}`);
+}
+
+function logError(prefix, message) {
+  const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+  console.error(`[${timestamp}] [ERROR] [${prefix}] ${message}`);
+}
+
+function logCommand(
+  project,
+  branch,
+  command,
+  output,
+  isError = false,
+  enableDetailedLog = false
+) {
+  // Skip detailed command logging if not enabled
+  if (!enableDetailedLog && !isError) {
+    // Always log a summary even when detailed logging is disabled
+    const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+    const logMethod = console.log;
+    logMethod(
+      `[${timestamp}] [SUMMARY] [${project}/${branch}] Command: ${command} - Completed ${
+        isError ? "with errors" : "successfully"
+      }`
+    );
+    return;
+  }
+
+  const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+  const logPrefix = `${project}/${branch}`;
+  const logMethod = isError ? console.error : console.log;
+
+  logMethod(`\n${"=".repeat(80)}`);
+  logMethod(
+    `[${timestamp}] [${
+      isError ? "ERROR" : "OUTPUT"
+    }] [${logPrefix}] Command: ${command}`
+  );
+  logMethod(`${"-".repeat(80)}`);
+  logMethod(output);
+  logMethod(`${"=".repeat(80)}\n`);
+}
+
+// Function to get logging configuration for a project/environment
+function getLogSettings(project, branchName) {
+  // Check if project has logging settings
+  if (!project || !project.environments || !project.environments[branchName]) {
+    return defaultLogSettings;
+  }
+
+  const environment = project.environments[branchName];
+
+  // Check if environment has logging settings
+  if (!environment.logSettings) {
+    return defaultLogSettings;
+  }
+
+  return {
+    ...defaultLogSettings,
+    ...environment.logSettings,
+  };
+}
 
 // Helper function to find project by URL
 function findProjectByUrl(repoUrl) {
@@ -47,7 +120,7 @@ function getAvailableBranches(project) {
 
 // Add job to queue
 function addJobToQueue(job) {
-  console.log(`Adding job to queue: ${job.repoUrl} (${job.branchName})`);
+  logInfo("Queue", `Adding job to queue: ${job.repoUrl} (${job.branchName})`);
 
   // Add timestamp and trigger info
   job.timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
@@ -55,18 +128,21 @@ function addJobToQueue(job) {
   // Find project and environment configuration for Slack notification
   const project = findProjectByUrl(job.repoUrl);
   if (!project) {
-    console.error(`Project not found for repository: ${job.repoUrl}`);
+    logError("Queue", `Project not found for repository: ${job.repoUrl}`);
     return { position: -1 };
   }
 
   const environment = findEnvironmentForBranch(project, job.branchName);
   if (!environment) {
-    console.error(`Environment not found for branch: ${job.branchName}`);
+    logError("Queue", `Environment not found for branch: ${job.branchName}`);
     return { position: -1 };
   }
 
   jobQueue.push(job);
   const queuePosition = jobQueue.length;
+
+  logInfo("Queue", `Job added at position ${queuePosition}`);
+
   // If there's already a job running or other jobs in the queue, send a queued notification
   if (isProcessing || queuePosition > 1) {
     sendQueuedNotification(
@@ -99,6 +175,11 @@ async function sendQueuedNotification(
   const triggeredBy = job.triggeredBy || "Unknown";
   const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
   const jobsAhead = position - 1;
+
+  logInfo(
+    "Notification",
+    `Sending queued notification for ${name}/${branchName}`
+  );
 
   // Send queued notification with queue position
   await sendMessageInSlack(slackWebhookUrl, {
@@ -151,6 +232,7 @@ async function sendQueuedNotification(
 async function processNextJob() {
   if (jobQueue.length === 0) {
     isProcessing = false;
+    logInfo("Queue", "No more jobs in queue. Processing complete.");
     return;
   }
 
@@ -158,21 +240,28 @@ async function processNextJob() {
   const job = jobQueue.shift();
 
   try {
-    console.log(
-      `Processing job for ${job.repoUrl} with branch ${job.branchName}`
+    logInfo(
+      "Processing",
+      `Starting job for ${job.repoUrl} (${job.branchName})`
     );
 
     // Find project and environment configuration
     const project = findProjectByUrl(job.repoUrl);
     if (!project) {
-      console.error(`Project not found for repository: ${job.repoUrl}`);
+      logError(
+        "Processing",
+        `Project not found for repository: ${job.repoUrl}`
+      );
       processNextJob();
       return;
     }
 
     const environment = findEnvironmentForBranch(project, job.branchName);
     if (!environment) {
-      console.error(`Environment not found for branch: ${job.branchName}`);
+      logError(
+        "Processing",
+        `Environment not found for branch: ${job.branchName}`
+      );
       processNextJob();
       return;
     }
@@ -183,17 +272,41 @@ async function processNextJob() {
     // Process next job automatically
     processNextJob();
   } catch (error) {
-    console.error(`Error processing job:`, error);
+    logError("Processing", `Error processing job: ${error.message}`);
     // Process next job even if there's an error
     processNextJob();
   }
 }
 
 const sendMessageInSlack = async (webhookUrl, payload) => {
+  // Return early if webhook URL is not valid
+  if (
+    !webhookUrl ||
+    typeof webhookUrl !== "string" ||
+    !webhookUrl.startsWith("http")
+  ) {
+    logInfo(
+      "Slack",
+      "Skipping Slack notification: Invalid or missing webhook URL"
+    );
+    return;
+  }
+
   try {
-    await axios.post(webhookUrl, payload);
+    await axios.post(webhookUrl, payload, {
+      timeout: 120000, // 120 second timeout to prevent long waits
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    logInfo("Slack", "Notification sent successfully");
   } catch (error) {
-    console.error("Error sending Slack message:", error);
+    // Log the error but don't throw it - allow the pipeline to continue
+    logError("Slack", `Error sending Slack message: ${error.message}`);
+    logInfo(
+      "Slack",
+      "Continuing deployment despite Slack notification failure"
+    );
   }
 };
 
@@ -203,44 +316,269 @@ const executeCommand = async (
   cwd,
   webhookUrl,
   projectName,
-  deploymentInfo
+  branchName
 ) => {
+  // Get logging settings
+  const project = findProjectByName(projectName)?.project;
+  const logSettings = getLogSettings(project, branchName);
+  const enableDetailedLog = logSettings.detailedLog === true;
+
+  if (enableDetailedLog) {
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Detailed logging is enabled for this environment`
+    );
+  }
+
   try {
-    // Execute command without Slack notification
-    console.log(`Executing command: ${command} in ${cwd}`);
-    const { stdout, stderr } = await execPromise(command, { cwd });
-    console.log(`Command succeeded: ${command}`);
+    const windir = process.env.windir || "C:\\Windows";
+    if (command.includes("%windir%")) {
+      command = command.replace(/%windir%/gi, windir);
+    }
 
-    return { success: true, stdout, stderr };
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Executing command: ${command} in ${cwd}`
+    );
+
+    const platform = os.platform();
+    let result;
+    let commandOutput = "";
+
+    if (platform === "win32") {
+      try {
+        const timestamp = Date.now();
+        const tempBatchPath = path.join(
+          os.tmpdir(),
+          `wooffer_elevated_${timestamp}.bat`
+        );
+        const logPath = path.join(
+          os.tmpdir(),
+          `wooffer_output_${timestamp}.log`
+        );
+
+        const batchContent = `@echo off
+cd /d "${cwd}"
+${command} > "${logPath}" 2>&1
+exit /b %errorlevel%`;
+
+        fs.writeFileSync(tempBatchPath, batchContent);
+
+        // Use System32\cmd.exe instead of Sysnative (since you're on 64-bit Node.js)
+        const cmd = `${windir}\\System32\\cmd.exe`;
+        await execPromise(
+          `powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs`
+        );
+
+        try {
+          commandOutput = await waitForLogFile(logPath);
+          logCommand(
+            projectName,
+            branchName,
+            command,
+            commandOutput,
+            false,
+            enableDetailedLog
+          );
+        } catch (readErr) {
+          logError(
+            projectName,
+            branchName,
+            `Failed to read log file: ${readErr.message}`
+          );
+        }
+
+        try {
+          fs.unlinkSync(tempBatchPath);
+          fs.unlinkSync(logPath);
+        } catch (cleanupError) {
+          logError(
+            projectName,
+            branchName,
+            `Failed to remove temporary files: ${cleanupError.message}`
+          );
+        }
+      } catch (elevationError) {
+        logError(
+          `${projectName}/${branchName}`,
+          `Failed to elevate command on Windows: ${elevationError.message}`
+        );
+
+        try {
+          const timestamp = Date.now();
+          const vbsPath = path.join(
+            os.tmpdir(),
+            `wooffer_elevated_${timestamp}.vbs`
+          );
+          const batchPath = path.join(
+            os.tmpdir(),
+            `wooffer_command_${timestamp}.bat`
+          );
+          const logPath = path.join(
+            os.tmpdir(),
+            `wooffer_output_${timestamp}.log`
+          );
+
+          const batchContent = `@echo off
+cd /d "${cwd}"
+${command} > "${logPath}" 2>&1
+exit /b %errorlevel%`;
+
+          const vbsContent = `Set UAC = CreateObject("Shell.Application")
+UAC.ShellExecute "${batchPath}", "", "", "runas", 1
+WScript.Sleep 10000`;
+
+          fs.writeFileSync(batchPath, batchContent);
+          fs.writeFileSync(vbsPath, vbsContent);
+
+          await execPromise(`cscript //nologo "${vbsPath}"`);
+
+          try {
+            commandOutput = await waitForLogFile(logPath);
+            logCommand(
+              projectName,
+              branchName,
+              command,
+              commandOutput,
+              false,
+              enableDetailedLog
+            );
+          } catch (readErr) {
+            logError(
+              projectName,
+              branchName,
+              `Failed to read log file: ${readErr.message}`
+            );
+          }
+
+          try {
+            fs.unlinkSync(vbsPath);
+            fs.unlinkSync(batchPath);
+            fs.unlinkSync(logPath);
+          } catch (cleanupError) {
+            logError(
+              projectName,
+              branchName,
+              `Failed to remove temporary files: ${cleanupError.message}`
+            );
+          }
+        } catch (vbsError) {
+          logError(
+            `${projectName}/${branchName}`,
+            `Failed second elevation attempt on Windows: ${vbsError.message}`
+          );
+
+          result = await execPromise(command, { cwd });
+
+          if (result.stdout)
+            logCommand(
+              projectName,
+              branchName,
+              command,
+              result.stdout,
+              false,
+              enableDetailedLog
+            );
+          if (result.stderr)
+            logCommand(
+              projectName,
+              branchName,
+              command,
+              result.stderr,
+              true,
+              enableDetailedLog
+            );
+        }
+      }
+    } else {
+      result = await execPromise(command, { cwd });
+
+      if (result.stdout)
+        logCommand(
+          projectName,
+          branchName,
+          command,
+          result.stdout,
+          false,
+          enableDetailedLog
+        );
+      if (result.stderr)
+        logCommand(
+          projectName,
+          branchName,
+          command,
+          result.stderr,
+          result.stderr.length > 0,
+          enableDetailedLog
+        );
+    }
+
+    logInfo(
+      `${projectName}/${branchName}`,
+      `Command completed successfully: ${command}`
+    );
+    if (enableDetailedLog) {
+      logInfo(
+        `${projectName}/${branchName}`,
+        `Command output:\n${commandOutput || result?.stdout || "[No Output]"}`
+      );
+    }
+
+    return {
+      success: true,
+      stdout: commandOutput || result?.stdout || "",
+      stderr: result?.stderr || "",
+    };
   } catch (error) {
-    console.error(`Command failed: ${command}`, error);
+    logError(
+      `${projectName}/${branchName}`,
+      `Command failed: ${command}\nError: ${error.message}`
+    );
 
-    // Send notification for failed command with detailed information
-    await sendMessageInSlack(webhookUrl, {
-      attachments: [
-        {
-          color: "#FF0000", // Red for failure
-          title: `⚠️ Command Failed During Deployment`,
-          text: `A command failed while deploying ${projectName}`,
-          fields: [
-            {
-              title: "Failed Command",
-              value: command,
-            },
-            {
-              title: "Error Message",
-              value: error.message,
-            },
-            {
-              title: "Directory",
-              value: cwd,
-            },
-          ],
-          footer: "Wooffer CI/CD",
-          ts: Math.floor(Date.now() / 1000),
-        },
-      ],
-    });
+    const isPermissionError =
+      error.message.includes("Access is denied") ||
+      error.message.includes("permission denied") ||
+      error.message.includes("EPERM") ||
+      error.message.includes("EACCES") ||
+      error.message.includes("elevated privileges required");
+
+    const errorMessage = isPermissionError
+      ? `Permission error: This command requires elevated privileges. Please ensure the CI/CD service has appropriate permissions.`
+      : error.message;
+
+    logError(`${projectName}/${branchName}`, `Error details: ${errorMessage}`);
+
+    try {
+      await sendMessageInSlack(webhookUrl, {
+        attachments: [
+          {
+            color: "#FF0000",
+            title: `⚠️ Command Failed During Deployment`,
+            text: `A command failed while deploying ${projectName}`,
+            fields: [
+              { title: "Failed Command", value: command },
+              { title: "Error Message", value: errorMessage },
+              { title: "Directory", value: cwd },
+              ...(isPermissionError
+                ? [
+                    {
+                      title: "Recommendation",
+                      value: `Run the CI/CD service with administrator privileges or modify the command to use appropriate elevation.`,
+                    },
+                  ]
+                : []),
+            ],
+            footer: "Wooffer CI/CD",
+            ts: Math.floor(Date.now() / 1000),
+          },
+        ],
+      });
+    } catch (notificationError) {
+      logError(
+        `${projectName}/${branchName}`,
+        `Failed to send error notification: ${notificationError.message}`
+      );
+    }
 
     throw error;
   }
@@ -253,54 +591,35 @@ const executeDeployment = async (project, branchName, environment, job) => {
   const triggeredBy = job.triggeredBy || "Unknown";
   const timestamp = job.timestamp || moment().format("YYYY-MM-DD HH:mm:ss");
 
+  // Check logging settings
+  const logSettings = getLogSettings(project, branchName);
+  const detailedLog = logSettings.detailedLog === true;
+
+  logInfo(
+    `${name}/${branchName}`,
+    `Starting deployment for ${name} (${branchName})`
+  );
+  if (detailedLog) {
+    logInfo(
+      `${name}/${branchName}`,
+      `Detailed logging is enabled for this deployment`
+    );
+  } else {
+    logInfo(
+      `${name}/${branchName}`,
+      `Detailed logging is disabled. To enable, set detailedLog: true in config.json for this environment`
+    );
+  }
+
   // Send deployment started notification with comprehensive information
-  await sendMessageInSlack(slackWebhookUrl, {
-    attachments: [
-      {
-        color: "#FFA500", // Orange for in-progress
-        title: `🚀 Deployment Started: ${name}`,
-        text: `Starting deployment for ${name} (${branchName})`,
-        fields: [
-          {
-            title: "Project",
-            value: name,
-            short: true,
-          },
-          {
-            title: "Branch",
-            value: branchName,
-            short: true,
-          },
-          {
-            title: "Triggered By",
-            value: triggeredBy,
-            short: true,
-          },
-          {
-            title: "Time Started",
-            value: timestamp,
-            short: true,
-          },
-        ],
-        footer: "Wooffer CI/CD",
-        ts: Math.floor(Date.now() / 1000),
-      },
-    ],
-  });
-
+  // Wrap in try/catch to prevent notification errors from stopping deployment
   try {
-    // Execute commands sequentially without individual notifications
-    for (const command of commands) {
-      await executeCommand(command, deployPath, slackWebhookUrl, name);
-    }
-
-    // Only send notification upon successful completion of all commands
     await sendMessageInSlack(slackWebhookUrl, {
       attachments: [
         {
-          color: "#7CD197", // Green for success
-          title: `✅ Deployment Completed: ${name}`,
-          text: `Successfully deployed ${name} (${branchName})`,
+          color: "#FFA500", // Orange for in-progress
+          title: `🚀 Deployment Started: ${name}`,
+          text: `Starting deployment for ${name} (${branchName})`,
           fields: [
             {
               title: "Project",
@@ -318,17 +637,13 @@ const executeDeployment = async (project, branchName, environment, job) => {
               short: true,
             },
             {
-              title: "Time Completed",
-              value: moment().format("YYYY-MM-DD HH:mm:ss"),
+              title: "Time Started",
+              value: timestamp,
               short: true,
             },
             {
-              title: "Duration",
-              value:
-                moment().diff(
-                  moment(timestamp, "YYYY-MM-DD HH:mm:ss"),
-                  "minutes"
-                ) + " minutes",
+              title: "Detailed Logging",
+              value: detailedLog ? "Enabled" : "Disabled",
               short: true,
             },
           ],
@@ -337,9 +652,106 @@ const executeDeployment = async (project, branchName, environment, job) => {
         },
       ],
     });
+    logInfo(
+      `${name}/${branchName}`,
+      "Sent deployment started notification to Slack"
+    );
+  } catch (notificationError) {
+    logError(
+      `${name}/${branchName}`,
+      `Failed to send start notification: ${notificationError.message}`
+    );
+    logInfo(
+      `${name}/${branchName}`,
+      "Continuing deployment despite notification failure"
+    );
+  }
+
+  try {
+    // Execute commands sequentially without individual notifications
+    for (const command of commands) {
+      await executeCommand(
+        command,
+        deployPath,
+        slackWebhookUrl,
+        name,
+        branchName
+      );
+    }
+
+    logInfo(`${name}/${branchName}`, `Deployment completed successfully`);
+
+    // Only send notification upon successful completion of all commands
+    try {
+      await sendMessageInSlack(slackWebhookUrl, {
+        attachments: [
+          {
+            color: "#7CD197", // Green for success
+            title: `✅ Deployment Completed: ${name}`,
+            text: `Successfully deployed ${name} (${branchName})`,
+            fields: [
+              {
+                title: "Project",
+                value: name,
+                short: true,
+              },
+              {
+                title: "Branch",
+                value: branchName,
+                short: true,
+              },
+              {
+                title: "Triggered By",
+                value: triggeredBy,
+                short: true,
+              },
+              {
+                title: "Time Completed",
+                value: moment().format("YYYY-MM-DD HH:mm:ss"),
+                short: true,
+              },
+              {
+                title: "Duration",
+                value:
+                  moment().diff(
+                    moment(timestamp, "YYYY-MM-DD HH:mm:ss"),
+                    "minutes"
+                  ) + " minutes",
+                short: true,
+              },
+              {
+                title: "Detailed Logging",
+                value: detailedLog ? "Enabled" : "Disabled",
+                short: true,
+              },
+            ],
+            footer: "Wooffer CI/CD",
+            ts: Math.floor(Date.now() / 1000),
+          },
+        ],
+      });
+      logInfo(
+        `${name}/${branchName}`,
+        "Sent deployment completed notification to Slack"
+      );
+    } catch (notificationError) {
+      logError(
+        `${name}/${branchName}`,
+        `Failed to send completion notification: ${notificationError.message}`
+      );
+      logInfo(
+        `${name}/${branchName}`,
+        "Deployment was successful despite notification failure"
+      );
+    }
 
     return { success: true };
   } catch (error) {
+    logError(
+      `${name}/${branchName}`,
+      `Deployment failed with error: ${error.message}`
+    );
+
     // No additional failure notification - the individual command failure is enough
     console.error(`Deployment failed: ${error.message}`);
     return { success: false, error: error.message };

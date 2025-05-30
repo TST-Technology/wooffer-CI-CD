@@ -358,7 +358,8 @@ const executeCommand = async (
         );
 
         const batchContent = `@echo off
-cd /d "${cwd}"
+${cwd.charAt(0)}:
+cd "${cwd}"
 ${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
@@ -420,7 +421,8 @@ exit /b %errorlevel%`;
           );
 
           const batchContent = `@echo off
-cd /d "${cwd}"
+${cwd.charAt(0)}:
+cd "${cwd}"
 ${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
@@ -670,13 +672,18 @@ const executeDeployment = async (project, branchName, environment, job) => {
   try {
     // Execute commands sequentially without individual notifications
     for (const command of commands) {
-      await executeCommand(
+      const result = await executeCommand(
         command,
         deployPath,
         slackWebhookUrl,
         name,
         branchName
       );
+
+      // If command failed, don't proceed with more commands
+      if (!result.success) {
+        throw new Error(`Command failed: ${command}`);
+      }
     }
 
     logInfo(`${name}/${branchName}`, `Deployment completed successfully`);
@@ -752,7 +759,53 @@ const executeDeployment = async (project, branchName, environment, job) => {
       `Deployment failed with error: ${error.message}`
     );
 
-    // No additional failure notification - the individual command failure is enough
+    // Send failure notification to Slack
+    try {
+      await sendMessageInSlack(slackWebhookUrl, {
+        attachments: [
+          {
+            color: "#FF0000", // Red for failure
+            title: `❌ Deployment Failed: ${name}`,
+            text: `Deployment for ${name} (${branchName}) failed`,
+            fields: [
+              {
+                title: "Project",
+                value: name,
+                short: true,
+              },
+              {
+                title: "Branch",
+                value: branchName,
+                short: true,
+              },
+              {
+                title: "Triggered By",
+                value: triggeredBy,
+                short: true,
+              },
+              {
+                title: "Time Failed",
+                value: moment().format("YYYY-MM-DD HH:mm:ss"),
+                short: true,
+              },
+              {
+                title: "Error",
+                value: error.message,
+                short: false,
+              },
+            ],
+            footer: "Wooffer CI/CD",
+            ts: Math.floor(Date.now() / 1000),
+          },
+        ],
+      });
+    } catch (notificationError) {
+      logError(
+        `${name}/${branchName}`,
+        `Failed to send failure notification: ${notificationError.message}`
+      );
+    }
+
     console.error(`Deployment failed: ${error.message}`);
     return { success: false, error: error.message };
   }

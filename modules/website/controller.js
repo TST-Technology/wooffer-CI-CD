@@ -310,6 +310,33 @@ const sendMessageInSlack = async (webhookUrl, payload) => {
   }
 };
 
+// Function to wait for log file to be created and read its contents
+const waitForLogFile = async (
+  filePath,
+  maxWaitMs = 30000,
+  pollIntervalMs = 500
+) => {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        if (stats.size > 0) {
+          return fs.readFileSync(filePath, "utf8");
+        }
+      }
+    } catch (err) {
+      // Ignore errors, just retry
+    }
+
+    // Wait before polling again
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  throw new Error(`Timed out waiting for log file: ${filePath}`);
+};
+
 // Execute a single command in the specified directory
 const executeCommand = async (
   command,
@@ -371,7 +398,7 @@ exit /b %errorlevel%`;
         // Use System32\cmd.exe instead of Sysnative (since you're on 64-bit Node.js)
         const cmd = `${windir}\\System32\\cmd.exe`;
         await execPromise(
-          `powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs`
+          `powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs -Wait`
         );
 
         try {
@@ -440,6 +467,9 @@ WScript.Sleep 10000`;
           fs.writeFileSync(vbsPath, vbsContent);
 
           await execPromise(`cscript //nologo "${vbsPath}"`);
+
+          // Wait for command to complete (VBS doesn't wait)
+          await new Promise((resolve) => setTimeout(resolve, 5000));
 
           try {
             commandOutput = await waitForLogFile(logPath);

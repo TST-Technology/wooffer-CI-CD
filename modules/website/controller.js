@@ -375,6 +375,8 @@ const executeCommand = async (
 
           // Use elevate.exec to run the command with admin privileges
           elevate.exec(cmd, { cwd: workingDir }, (error, stdout, stderr) => {
+            console.log(`stdout: ${stdout}`);
+            console.log(`stderr: ${stderr}`);
             if (error) {
               return reject(error);
             }

@@ -313,7 +313,7 @@ const sendMessageInSlack = async (webhookUrl, payload) => {
 // Function to wait for log file to be created and read its contents
 const waitForLogFile = async (
   filePath,
-  maxWaitMs = 30000,
+  maxWaitMs = 3600000,
   pollIntervalMs = 500
 ) => {
   const startTime = Date.now();
@@ -402,7 +402,7 @@ exit /b %errorlevel%`;
         );
 
         try {
-          // commandOutput = await waitForLogFile(logPath);
+          commandOutput = await waitForLogFile(logPath);
           logCommand(
             projectName,
             branchName,
@@ -472,7 +472,7 @@ WScript.Sleep 10000`;
           await new Promise((resolve) => setTimeout(resolve, 5000));
 
           try {
-            // commandOutput = await waitForLogFile(logPath);
+            commandOutput = await waitForLogFile(logPath);
             logCommand(
               projectName,
               branchName,

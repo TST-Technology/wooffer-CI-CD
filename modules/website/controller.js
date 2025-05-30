@@ -358,8 +358,11 @@ const executeCommand = async (
         );
 
         const batchContent = `@echo off
+echo Current Directory Before:
 ${cwd.charAt(0)}:
 cd "${cwd}"
+echo Current Directory After: 
+cd
 ${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 
@@ -421,8 +424,11 @@ exit /b %errorlevel%`;
           );
 
           const batchContent = `@echo off
+echo Current Directory Before:
 ${cwd.charAt(0)}:
 cd "${cwd}"
+echo Current Directory After: 
+cd
 ${command} > "${logPath}" 2>&1
 exit /b %errorlevel%`;
 

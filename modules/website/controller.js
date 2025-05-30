@@ -6,6 +6,18 @@ const util = require("util");
 const moment = require("moment");
 const os = require("os");
 
+// Add windows-elevate for handling Windows elevation
+let elevate;
+if (os.platform() === "win32") {
+  try {
+    elevate = require("windows-elevate");
+  } catch (err) {
+    console.error(
+      "windows-elevate package not found. Please install with: npm install --save windows-elevate"
+    );
+  }
+}
+
 // Convert exec to promise
 const execPromise = util.promisify(exec);
 
@@ -310,33 +322,6 @@ const sendMessageInSlack = async (webhookUrl, payload) => {
   }
 };
 
-// Function to wait for log file to be created and read its contents
-const waitForLogFile = async (
-  filePath,
-  maxWaitMs = 3600000,
-  pollIntervalMs = 500
-) => {
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < maxWaitMs) {
-    try {
-      if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        if (stats.size > 0) {
-          return fs.readFileSync(filePath, "utf8");
-        }
-      }
-    } catch (err) {
-      // Ignore errors, just retry
-    }
-
-    // Wait before polling again
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-  }
-
-  throw new Error(`Timed out waiting for log file: ${filePath}`);
-};
-
 // Execute a single command in the specified directory
 const executeCommand = async (
   command,
@@ -373,142 +358,70 @@ const executeCommand = async (
     let commandOutput = "";
 
     if (platform === "win32") {
+      // Create a promise wrapper for elevate.exec
+      const elevateExecPromise = (cmd, workingDir) => {
+        return new Promise((resolve, reject) => {
+          if (!elevate) {
+            return reject(
+              new Error(
+                "windows-elevate package not installed. Run: npm install --save windows-elevate"
+              )
+            );
+          }
+
+          // Log the current directory for debugging
+          console.log(`Current directory before elevation: ${process.cwd()}`);
+          console.log(`Target directory: ${workingDir}`);
+
+          // Use elevate.exec to run the command with admin privileges
+          elevate.exec(cmd, { cwd: workingDir }, (error, stdout, stderr) => {
+            if (error) {
+              return reject(error);
+            }
+            resolve({ stdout, stderr });
+          });
+        });
+      };
+
       try {
-        const timestamp = Date.now();
-        const tempBatchPath = path.join(
-          os.tmpdir(),
-          `wooffer_elevated_${timestamp}.bat`
-        );
-        const logPath = path.join(
-          os.tmpdir(),
-          `wooffer_output_${timestamp}.log`
-        );
+        // Execute command with elevation
+        result = await elevateExecPromise(command, cwd);
 
-        const batchContent = `@echo off
-echo Current Directory Before:
-${cwd.charAt(0)}:
-cd "${cwd}"
-echo Current Directory After: 
-cd
-${command} > "${logPath}" 2>&1
-exit /b %errorlevel%`;
-
-        fs.writeFileSync(tempBatchPath, batchContent);
-
-        // Use System32\cmd.exe instead of Sysnative (since you're on 64-bit Node.js)
-        const cmd = `${windir}\\System32\\cmd.exe`;
-        await execPromise(
-          `powershell Start-Process "${cmd}" -ArgumentList '/c "${tempBatchPath}"' -Verb RunAs -Wait`
-        );
-
-        try {
-          commandOutput = await waitForLogFile(logPath);
+        if (result.stdout) {
           logCommand(
             projectName,
             branchName,
             command,
-            commandOutput,
+            result.stdout,
             false,
             enableDetailedLog
           );
-        } catch (readErr) {
-          logError(
+        }
+
+        if (result.stderr) {
+          logCommand(
             projectName,
             branchName,
-            `Failed to read log file: ${readErr.message}`
+            command,
+            result.stderr,
+            result.stderr.length > 0,
+            enableDetailedLog
           );
         }
 
-        try {
-          fs.unlinkSync(tempBatchPath);
-          fs.unlinkSync(logPath);
-        } catch (cleanupError) {
-          logError(
-            projectName,
-            branchName,
-            `Failed to remove temporary files: ${cleanupError.message}`
-          );
-        }
+        commandOutput = result.stdout;
       } catch (elevationError) {
         logError(
           `${projectName}/${branchName}`,
-          `Failed to elevate command on Windows: ${elevationError.message}`
+          `Failed to execute elevated command: ${elevationError.message}`
         );
 
+        // Try without elevation as fallback
         try {
-          const timestamp = Date.now();
-          const vbsPath = path.join(
-            os.tmpdir(),
-            `wooffer_elevated_${timestamp}.vbs`
-          );
-          const batchPath = path.join(
-            os.tmpdir(),
-            `wooffer_command_${timestamp}.bat`
-          );
-          const logPath = path.join(
-            os.tmpdir(),
-            `wooffer_output_${timestamp}.log`
-          );
-
-          const batchContent = `@echo off
-echo Current Directory Before:
-${cwd.charAt(0)}:
-cd "${cwd}"
-echo Current Directory After: 
-cd
-${command} > "${logPath}" 2>&1
-exit /b %errorlevel%`;
-
-          const vbsContent = `Set UAC = CreateObject("Shell.Application")
-UAC.ShellExecute "${batchPath}", "", "", "runas", 1
-WScript.Sleep 10000`;
-
-          fs.writeFileSync(batchPath, batchContent);
-          fs.writeFileSync(vbsPath, vbsContent);
-
-          await execPromise(`cscript //nologo "${vbsPath}"`);
-
-          // Wait for command to complete (VBS doesn't wait)
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-
-          try {
-            commandOutput = await waitForLogFile(logPath);
-            logCommand(
-              projectName,
-              branchName,
-              command,
-              commandOutput,
-              false,
-              enableDetailedLog
-            );
-          } catch (readErr) {
-            logError(
-              projectName,
-              branchName,
-              `Failed to read log file: ${readErr.message}`
-            );
-          }
-
-          try {
-            fs.unlinkSync(vbsPath);
-            fs.unlinkSync(batchPath);
-            fs.unlinkSync(logPath);
-          } catch (cleanupError) {
-            logError(
-              projectName,
-              branchName,
-              `Failed to remove temporary files: ${cleanupError.message}`
-            );
-          }
-        } catch (vbsError) {
-          logError(
-            `${projectName}/${branchName}`,
-            `Failed second elevation attempt on Windows: ${vbsError.message}`
-          );
-
           result = await execPromise(command, { cwd });
+          commandOutput = result.stdout;
 
-          if (result.stdout)
+          if (result.stdout) {
             logCommand(
               projectName,
               branchName,
@@ -517,18 +430,24 @@ WScript.Sleep 10000`;
               false,
               enableDetailedLog
             );
-          if (result.stderr)
+          }
+
+          if (result.stderr) {
             logCommand(
               projectName,
               branchName,
               command,
               result.stderr,
-              true,
+              result.stderr.length > 0,
               enableDetailedLog
             );
+          }
+        } catch (execError) {
+          throw execError;
         }
       }
     } else {
+      // Non-Windows platforms use the original exec
       result = await execPromise(command, { cwd });
 
       if (result.stdout)
@@ -549,6 +468,8 @@ WScript.Sleep 10000`;
           result.stderr.length > 0,
           enableDetailedLog
         );
+
+      commandOutput = result.stdout;
     }
 
     logInfo(
@@ -558,13 +479,13 @@ WScript.Sleep 10000`;
     if (enableDetailedLog) {
       logInfo(
         `${projectName}/${branchName}`,
-        `Command output:\n${commandOutput || result?.stdout || "[No Output]"}`
+        `Command output:\n${commandOutput || "[No Output]"}`
       );
     }
 
     return {
       success: true,
-      stdout: commandOutput || result?.stdout || "",
+      stdout: commandOutput || "",
       stderr: result?.stderr || "",
     };
   } catch (error) {

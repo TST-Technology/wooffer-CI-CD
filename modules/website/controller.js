@@ -402,7 +402,7 @@ exit /b %errorlevel%`;
         );
 
         try {
-          commandOutput = await waitForLogFile(logPath);
+          // commandOutput = await waitForLogFile(logPath);
           logCommand(
             projectName,
             branchName,
@@ -472,7 +472,7 @@ WScript.Sleep 10000`;
           await new Promise((resolve) => setTimeout(resolve, 5000));
 
           try {
-            commandOutput = await waitForLogFile(logPath);
+            // commandOutput = await waitForLogFile(logPath);
             logCommand(
               projectName,
               branchName,
